@@ -1,53 +1,47 @@
-# cordis-mp 持久化事务 Journal 正式规格 v2
+# cordis-mp 持久化事务 Journal 正式规格 v3
 
-> 状态：v2，待 Codex 二次 review
-> v2 修订：修复 v1 评审 6 个阻断项：
-> ① 追加式 op 日志 + 确定性 reducer，支持多次写/回滚二次崩溃；
-> ② 文件状态统一为 (exists, hash) 二元组，增加 durable unlink 协议；
-> ③ marker 为唯一提交权威，清理改为 rename tombstone，截断尾行可恢复；
-> ④ repair 两个动作都有全量预检和确定终态；
-> ⑤ JournalPort 收敛为 writeTarget/deleteTarget 等高层原语，内部强制完整写协议；
-> ⑥ “不静默覆盖”只对协作锁内写入承诺，非协作写入为 best-effort 检测。
+> 状态：v3，待 Codex 第三轮 review
+> v3 修订：修复 v2 评审 4 个阻断项：
+> ① reducer 拆为无副作用逻辑归约 + 物理 current 判定，支持 A→B→C 与回滚二次崩溃；
+> ② restore-snapshot 改为独立 RESOLUTION 事务，允许持久化进度但绝不虚报成功；
+> ③ 锁规则改为“活进程禁止接管”，token fencing 只作纵深防御并明确 TOCTOU 边界；
+> ④ 扫描优先级明确：tombstone → OUTCOME → COMMITTED marker → reducer，清理双目录 fsync。
 
 ## 1. 范围与保证
 
-本规格定义 cordis-mp mutation（install/update/uninstall/rollback）对 profile
-文本文件写入的崩溃恢复协议。目标文件（target）rel 路径封闭 allowlist：
-`package.json`、`pnpm-lock.yaml`、`cordis.patch.yml`、
-`.cordis-mp/state.json`，其他路径拒绝。
+本规格定义 cordis-mp mutation 对 profile 文本文件写入的崩溃恢复协议。
+target rel 路径封闭 allowlist：`package.json`、`pnpm-lock.yaml`、
+`cordis.patch.yml`、`.cordis-mp/state.json`。
 
 保证分级：
-- **协作保证**：所有持有 §8 锁并遵守本协议的进程之间，不存在静默覆盖。
-- **非协作保证（best-effort）**：不参与锁的 `dsh plugin` 或手工编辑，通过写前
-  乐观检查检测；已知不可检测窗口 = “检查后到 rename/unlink 前”、“终检后到
-  marker 创建前”的非协作写入。检测到即 CONFLICTED 并保全证据，绝不静默覆盖。
+- **协作保证**：遵守 §9 锁规则的进程之间不存在静默覆盖；锁禁止活进程被
+  force 接管，因此旧 owner 恢复后继续写的情况被排除。
+- **非协作 best-effort**：不参与锁的外部 `dsh plugin`/手工编辑通过写前检查
+  检测；不可检测窗口为“检查后到 rename/unlink 前”与“终检后到 marker 前”。
+  检测到即 CONFLICTED 并保全证据。
+- **平台分级**：POSIX（父目录 fsync 可用）为 FULL durability；其他平台
+  （含 Windows 未实现目录 FlushFileBuffers 时）为 BEST_EFFORT，诊断中明示。
 
 ## 2. 基本类型
 
-- 文件状态 `FileState = { exists: boolean, hash: string | null }`：
-  - 存在：`{exists:true, hash:"sha256:<hex>"}`；
-  - 不存在：`{exists:false, hash:null}`，不再使用 ABSENT 字符串。
-- hash = sha256 内容，hex；空文件 hash 为 sha256("")。
+- `FileState = { exists: boolean, hash: string | null }`；存在时
+  `hash="sha256:<hex>"`，不存在时 `exists:false, hash:null`。
+- `FileMeta = FileState & { mode?: string }`（mode 记录 before 权限）。
 - `targetKey = sha256(rel)`。
+- `opId = "<txid>-<seq>"`。
 
 ## 3. 目录布局
 
 ```
 profiles/web/.cordis-mp/
-  lock.json                       # §8
-  journal/<txid>/
-    manifest.json                 # 原子写，schemaVersion=1
-    snapshots/<key>.bin           # before 内容；before 不存在则不落盘
-    ops/<key>.jsonl               # 追加式 op 日志
-    COMMITTED                     # 提交唯一权威 marker
-    OUTCOME.json                  # 终态（COMMITTED/ROLLED_BACK/ACCEPTED_CURRENT/...）
-  conflicts/<txid>/
-    evidence/...                  # 冲突证据副本
-    report.json
-  trash/<txid>-<ts>/              # 清理 tombstone
+  lock.json
+  journal/<txid>/{manifest.json, snapshots/<key>.bin, ops/<key>.jsonl,
+                 COMMITTED, OUTCOME.json}
+  conflicts/<txid>/{evidence/..., report.json, accepted-<ts>/...}
+  trash/<txid>-<ts>/
 ```
 
-journal/trash/conflicts 目录 0700；文件 0600；父目录创建前 lstat no-follow。
+journal/trash/conflicts 0700；文件 0600；父目录 lstat no-follow。
 
 ## 4. 状态机
 
@@ -55,249 +49,247 @@ journal/trash/conflicts 目录 0700；文件 0600；父目录创建前 lstat no-
 PREPARING → PREPARED → MUTATING → FILE_COMMITTED → CLEANED
                               ↘ ROLLING_BACK → ROLLED_BACK → CLEANED
 任意态 ──冲突──→ CONFLICTED
-manifest 损坏/未知 schema ──→ UNRECOVERABLE
+CONFLICTED ──用户 authorize──→ RESOLVING → RESOLVED|RESOLUTION_CONFLICTED
+manifest 损坏/未知 schema/无法解释日志 ──→ UNRECOVERABLE
 ```
 
-| 状态 | 含义 |
-|---|---|
-| PREPARING | manifest 尚未完整落盘（tx 目录已建） |
-| PREPARED | manifest + snapshots 完整；未开始 target 写 |
-| MUTATING | 至少一个 op 已 INTENDED |
-| FILE_COMMITTED | manifest 记录已提交（仅信息性） |
-| ROLLING_BACK | 回滚 op 已 INTENDED |
-| ROLLED_BACK | 回滚 op 已 CONFIRMED 且目标达 before |
-| CONFLICTED | 检测到外部编辑或修复校验失败 |
-| UNRECOVERABLE | journal 损坏/未知版本，只诊断 |
+- `FILE_COMMITTED` 仅是 manifest 信息；**COMMITTED marker 是提交唯一权威**。
+- `ROLLING_BACK`：自动回滚 op 已 INTENDED。
+- `RESOLVING`：用户授权的 restore-snapshot 事务执行中；允许持久化进度，
+  只有全部 target 回到 before 才写 `OUTCOME=RESOLVED`。
 
-**COMMITTED marker 是提交唯一权威**：
-- 有 marker → 已提交，永不自动回滚；manifest.state 可滞后。
-- 无 marker → 未提交；即使 manifest.state=FILE_COMMITTED 也按未提交回滚。
+## 5. Op 日志协议
 
-## 5. Op 日志协议（核心）
-
-每次逻辑写（正向写、回滚写、删除）都生成一个 op 记录，追加到
-`ops/<key>.jsonl`。**恢复不按“最后一行 phase”解释，而是按 opId 顺序运行
-确定性 reducer。**
-
-### 5.1 op 记录 schema
+### 5.1 op schema
 ```json
-{
-  "v": 1,
-  "opId": "<txid>-<seq>",
-  "seq": 3,
-  "kind": "FORWARD" | "ROLLBACK",
-  "phase": "INTENDED" | "CONFIRMED" | "CANCELLED",
-  "expected": { "exists": true, "hash": "sha256:B" },
-  "next":     { "exists": true, "hash": "sha256:C" },
-  "before":   { "exists": true, "hash": "sha256:A" },
-  "mode": "0644",
-  "length": 123
-}
+{ "v":1, "opId":"<txid>-3", "seq":3,
+  "kind":"FORWARD"|"ROLLBACK"|"RESOLUTION",
+  "phase":"INTENDED"|"CONFIRMED"|"CANCELLED",
+  "expected":{"exists":true,"hash":"sha256:B"},
+  "next":{"exists":true,"hash":"sha256:C"},
+  "before":{"exists":true,"hash":"sha256:A"},
+  "mode":"0644","length":123 }
 ```
-- `before`：事务初始状态；`expected`：执行本次写时期望的当前拥有状态；
-  `next`：本次写目标状态。
-- seq 每 tx 严格递增，同一 op 更新只追加新 phase（同 opId、seq 相同），
-  不允许重复 CONFIRMED；恢复时同一 opId 取最后 phase。
+- `before` 必须等于 manifest baseline 的 before；
+- 每 target 的 op 序列按 seq 递增；同 opId 只允许
+  `INTENDED→CONFIRMED` 或 `INTENDED→CANCELLED`；重复 CONFIRMED 非法。
 
-### 5.2 写协议（JournalPort.writeTarget 内部强制）
-1. **追加 INTENDED**（append + fsync 文件 + fsync 目录）；
-2. **乐观检查**：读取 target 当前 `FileState` 必须 == expected，否则
-   CONFLICTED，不写；
-3. **执行替换**（§5.3）；
-4. **复读校验**：当前 FileState == next，否则 CONFLICTED；
-5. **追加 CONFIRMED**（append + fsync + fsync 目录）。
+### 5.2 写协议（JournalPort.writePresent / delete 内部执行）
+1. 追加 INTENDED（append+fsync file+fsync dir）；
+2. 锁校验 + 乐观检查：current == expected，否则 CONFLICTED 不写；
+3. 替换：
+   - present→present：tmp 同目录随机名 `wx`，写 bytes，**在 fsync 前设置
+     before.mode**，fsync file，rename，fsync 父目录；
+   - absent→present：同上，mode 0600；
+   - present→absent：unlink + fsync 父目录；
+4. 复读校验 current == next，否则 CONFLICTED；
+5. 追加 CONFIRMED。
 
-### 5.3 替换原语
-- present→present：tmp 同目录随机名 `open('wx')`，写入，fsync file，
-  rename 到 target，fsync 父目录；**保留 before 文件 mode**。
-- absent→present：同上，新文件 mode 0600。
-- present→absent：`unlink(target)`，fsync 父目录。
-- absent→absent：不允许作为 op；视为协议错误。
-- target 若是 symlink：lstat 发现即拒绝（UNRECOVERABLE 只诊断）。
+### 5.3 提交
+1. 每个 target 最后 op 必须 CONFIRMED，无 pending INTENDED；
+2. 复读 current == 最后 CONFIRMED.next；
+3. 全等 → 创建 COMMITTED marker（tmp+rename+fsync 目录）；
+4. 写 manifest.state=FILE_COMMITTED（仅信息，允许滞后）。
 
-### 5.4 提交协议
-1. 对每个 target 复读 FileState == 最后 CONFIRMED.next；
-2. 任一不等 → CONFLICTED；
-3. 全部相等 → 原子创建 COMMITTED marker（tmp+rename+fsync 目录）；
-4. 写 manifest.state=FILE_COMMITTED（仅信息）。
+## 6. 恢复算法
 
-## 6. 恢复 reducer
+### 6.1 扫描优先级（v3 新增，逐条短路）
+1. `trash/*` 存在 → 只继续递归删除，不解释内容。
+2. `journal/<txid>/OUTCOME.json` 有效 → 按 OUTCOME 续做：
+   - `ROLLED_BACK|COMMITTED|ACCEPTED_CURRENT` → tombstone；
+   - `RESOLVING|RESOLUTION_CONFLICTED` → 进入 §7 resolution 恢复。
+3. `COMMITTED` marker 存在 → §6.4，永不回滚。
+4. 否则 → §6.2/§6.3 未提交路径。
+5. `journal/<txid>` 存在但无 manifest：
+   - 目录为空或仅含 `*.tmp` → RECOVERABLE_NOOP 删除；
+   - 含 snapshots/ops/marker 等 → UNRECOVERABLE（半残 journal）。
 
-### 6.1 输入
-- manifest、COMMITTED 存在性、每个 target 当前 FileState；
-- 该 target 完整 op 日志（按 seq 排序）。
+### 6.2 纯逻辑归约（无副作用，不读 current）
+对每 target 解析 op 日志并校验链式不变量：
+- `op.before == baseline.before`；
+- 首 op `expected == baseline.before`；后续 op `expected == 前一逻辑 owned`；
+- phase 转移合法；seq 连续；kind 参与转移：
+  - `CONFIRMED` ⇒ owned = op.next；
+  - `CANCELLED` ⇒ owned 不变；
+  - `INTENDED` 必须是最后一条（至多一个 pending）。
+- 校验失败 → UNRECOVERABLE（不是冲突）。
 
-### 6.2 逐 op 归约
-状态：`owned` = 最近一次被本事务 CONFIRMED 成功写入的 FileState；初始 =
-`before`（尚无确认写）。`lastOp` 记录最近 opId/phase。
+输出：`lastConfirmedOwned`（最后一个 CONFIRMED 的 next，无则 before）、
+`pending`（末尾未决 INTENDED 或 null）。
 
-按 seq 顺序处理每个 op（同 opId 取最后 phase）：
-| phase | 条件 | 动作 | owned |
-|---|---|---|---|
-| INTENDED | current == expected | 追加 CANCELLED（幂等） | 不变 |
-| INTENDED | current == next | 追加 CONFIRMED（认领） | = next |
-| INTENDED | 其他 | CONFLICT | — |
-| CONFIRMED | current == next | 接受 | = next |
-| CONFIRMED | current == owned | 已恢复/已替换 | 不变 |
-| CONFIRMED | 其他 | CONFLICT | — |
-| CANCELLED | current == owned | 接受 | 不变 |
-| CANCELLED | 其他 | CONFLICT | — |
-（匹配按 phase 行执行；`current == next` 与 `current == owned` 同时满足时
-取 phase 行中的第一条。）
+### 6.3 物理 current 判定（仅用于最后状态）
+- 无 pending：`current == lastConfirmedOwned` → consistent，否则 CONFLICT。
+- 有 pending：
+  - `current == pending.expected`（= 归约 owned）→ 计划追加 CANCELLED；
+  - `current == pending.next` → 计划追加 CONFIRMED，owned=pending.next；
+  - 其他 → CONFLICT。
+- 归约结果 = `owned`；`pendingRollback = owned != before`。
 
-### 6.3 事务级恢复算法
-1. **只读分类**：对全部 target 运行 reducer，得到每 target 的
-   `owned`、`hasConflict`、`pendingRollback = (owned != before)`。
-2. 任一 target hasConflict → 整体 CONFLICTED；**不执行任何 target 写**。
-3. 无冲突：
-   - 有 COMMITTED marker → 进入 §6.4，永不回滚；
-   - 无 marker：
-     - 所有 target `pendingRollback=false` → ROLLED_BACK 终态（幂等）；
-     - 否则创建/继续 ROLLBACK ops，对每个 pendingRollback target 执行
-       `writeTarget`（expected=owned, next=before），完成 → ROLLED_BACK。
-4. 多 tx 目录：按 manifest.createdAt 升序逐个处理；存在未清理 tx 时，
-   cordis-mp host 禁止开启新 mutation。
+说明：历史 CONFIRMED 不与 current 逐条比较，因此 `A→B→C` 时
+current=C、owned=C，不会误判；`A→B→A` 时 owned=A 与 before 相同，
+pendingRollback=false，合法。
 
-### 6.4 COMMITTED 路径
-| 条件（逐 target，唯一匹配） | 判定 |
-|---|---|
-| current == 最后 CONFIRMED.next | COMMITTED_OK |
-| current == before 且 before != next | CONFLICTED（提交后被改回） |
-| current == 某历史 CONFIRMED.next（多写场景） | CONFLICTED |
-| 其他 | CONFLICTED |
-全部 COMMITTED_OK → 写 OUTCOME 并清理；否则 CONFLICTED，不回滚。
+### 6.4 事务级恢复（两阶段）
+**Phase 1 只读**：对所有 target 执行 §6.2/§6.3 得到 plan：
+`{appends[], pendingRollbackSet, conflictSet}`；不写任何文件。
+**Phase 2 持锁执行**：
+- conflictSet 非空 → archiveConflict + CONFLICTED；
+- 否则先执行 appends（CANCELLED/CONFIRMED），再对 pendingRollbackSet 的
+  每个 target 生成 ROLLBACK op 执行写协议（expected=owned, next=before）；
+  全部达到 before → ROLLED_BACK → OUTCOME → tombstone。
+- Phase 2 中再冲突：已 CONFIRMED 的回滚进度留在 op 日志中，事务置
+  CONFLICTED；下一次 repair 按同一算法继续（幂等收敛），**不得报告成功**。
 
-### 6.5 缺失/损坏判定
-- manifest 完全不存在（tx 目录只有垃圾）：target 写协议要求 manifest 先
-  落盘，因此判定 **RECOVERABLE_NOOP**，可直接清 tx 目录。
-- manifest 不可读/JSON 无效/schemaVersion 未知 → UNRECOVERABLE。
-- JSONL：允许**最后一条尾行截断**（忽略并记 warning）；除此之外任何行
-  不可解析、seq 跳变、同 opId 重复 CONFIRMED → UNRECOVERABLE。
-- PREPARING 无任何 op：检查所有 target == before → 清理；否则 CONFLICTED。
+多 tx 按 manifest.createdAt 升序逐个恢复；存在未清理 tx 时 host 拒绝新
+mutation。
 
-## 7. 清理协议（tombstone）
+### 6.5 COMMITTED 路径
+对每个 target：
+- 最后 op CONFIRMED 且 `current == 该 op.next` → OK；
+- 其他 → CONFLICTED（提交后被外部改），不回滚。
+全部 OK → OUTCOME=COMMITTED → tombstone。
 
-- 终态（ROLLED_BACK/COMMITTED/ACCEPTED_CURRENT）确认后：
-  1. 写 OUTCOME.json（原子写 + fsync）；
-  2. `rename(journal/<txid>, trash/<txid>-<ts>)` + fsync 父目录；
-  3. 递归删除 trash 目录。
-- 崩溃恢复：journal 已不在 → 看 OUTCOME 或 trash；trash 目录只做删除，
-  永不恢复。journal 半删除残骸按 RECOVERABLE_NOOP 处理（因为 marker/OUTCOME
-  决定语义已定）。
+## 7. Repair 与冲突处置
 
-## 8. 冲突证据与 repair
+`cordis-mp repair --profile web [--tx txid] [--action restore-snapshot|accept-current] [--yes] [--force]`
 
-### 8.1 冲突证据写入协议
-1. 复制当前文件到 `conflicts/<txid>/evidence/<targetKey>.bin`（tmp+rename，
-   fsync）；当前 absent 则写 `evidence/<key>.absent.json`；
-2. 复制 manifest、相关 op 日志、snapshot；
-3. 写 `report.json`（原子写）：txid、target、before/owned/current、
-   opId、检测阶段、时间；
-4. 写 manifest.state=CONFLICTED。
-崩溃恢复：report.json 存在即权威 → 补全 evidence 副本并置 CONFLICTED；
-evidence 半成品可重做，因为当前文件未被动过。
+### 7.1 冲突证据（archiveConflict）
+1. 复制 current 文件（或写 absent marker）到 evidence/（tmp+rename+fsync，
+   校验 hash）；
+2. 复制 manifest/ops/snapshots；
+3. 原子写 report.json；
+4. manifest.state=CONFLICTED。
+崩溃恢复：report.json 存在即权威，补全 evidence 后置 CONFLICTED。
 
-### 8.2 repair 动作（全量预检，绝无部分成功）
-`cordis-mp repair --profile web [--tx <txid>] [--action restore-snapshot|accept-current] [--force] [--yes]`
+### 7.2 restore-snapshot（独立 RESOLUTION 事务）
+- 前置：所有 target 的 before snapshot 完整且 hash 可验证；任一 snapshot
+  缺失/损坏 → 该动作不可用，报告 UNRECOVERABLE_RESTORE。
+- 生成不可变 resolution plan：每 target `expected = 当前 current（计划时
+  快照）`、`next = before`、`kind=RESOLUTION`；要求用户显式确认。
+- 执行：对每 target 写 RESOLUTION op（§5.2 协议）。中断后续跑：OUTCOME 或
+  manifest 置 `RESOLVING`；再次 repair 时按 §6.1 优先级继续。
+- 终态：全部 target == before → OUTCOME=RESOLVED → tombstone；
+  任一 target 因新外部编辑冲突 → `RESOLUTION_CONFLICTED`，已恢复的 target
+  是持久化进度并如实展示，**绝不报告整体成功**。
+- 明确放弃“跨文件物理原子性”：多文件恢复允许持久化部分进度，但成功
+  声明以全量校验为准。
 
-- 无 action：只读扫描输出 RECOVERABLE / CONFLICTED / UNRECOVERABLE。
-- RECOVERABLE：自动执行 §6.3 恢复（若用户未 --yes 则先打印计划）。
-- **restore-snapshot**：
-  1. 对 tx 全部 target 做只读 reducer；
-  2. 任一 hasConflict → 中止，保持 CONFLICTED；
-  3. 全部可恢复 → 新建一批 ROLLBACK ops 一次性执行；执行中再冲突 → 停止并
-     保持 CONFLICTED（已确认的回滚 op 会记录进度，但**不宣称恢复成功**）；
-  4. 全部 target == before → ROLLED_BACK + 清理；否则保持 CONFLICTED。
-- **accept-current**：
-  1. 封存旧 journal：copy 整个 journal 目录到
-     `conflicts/<txid>/accepted-<ts>/`，不修改旧 journal；
-  2. 调用业务一致性校验器（§10，独立于 JournalPort）验证当前 profile：
-     manifest 可解析、lockfile 与 manifest 一致（执行只读
-     `pnpm install --lockfile-only --frozen-lockfile` 语义检查）、
-     patch 可解析、state.json 可解析；
-  3. 通过 → 写 OUTCOME=ACCEPTED_CURRENT 并 tombstone；失败 → 保持
-     CONFLICTED，report 记录 resolution-failed（**不是 UNRECOVERABLE**）。
+### 7.3 accept-current
+1. 封存旧 journal 到 `conflicts/<txid>/accepted-<ts>/`（copy+fsync，不改旧件）；
+2. 调用 `BaselineValidatorPort.validateCurrentProfile()`（独立于
+   JournalPort）：manifest 可解析；`pnpm install --lockfile-only
+   --frozen-lockfile` 只读检查通过；patch/state 可解析；
+3. 通过 → OUTCOME=ACCEPTED_CURRENT → tombstone；失败 → 保持 CONFLICTED，
+   report 记 `resolution-failed`。
 
-## 9. 跨进程锁（fencing）
+## 8. 清理（tombstone）
+
+- 终态写 OUTCOME（原子写+fsync journal 目录）后：
+  1. `rename(journal/<txid>, trash/<txid>-<ts>)`；
+  2. fsync `journal/` 与 `trash/` 两个父目录；
+  3. 递归删除 trash。
+- 同文件系统 rename 是前提；跨设备不适用（journal 与 trash 同根，自然满足）。
+- 扫描时 trash 只删除；没有有效 OUTCOME/marker 的 journal 残骸不当作 trash。
+
+## 9. 跨进程锁与 fencing
 
 `lock.json`：
 ```json
-{ "owner": "host|repair", "bootId": "...", "pid": 123,
-  "ownerToken": "<crypto random>", "epoch": 1,
-  "acquiredAt": "...", "heartbeatAt": "..." }
+{ "owner":"host|repair", "bootId":"...", "pid":123, "processStartToken":"...",
+  "ownerToken":"...", "epoch":1, "acquiredAt":"...", "heartbeatAt":"..." }
 ```
-- 获取：`open('wx', 0600)`；已存在则读。
-- 心跳 5s，stale 阈值 30s；更新用原子替换 + fsync。
-- **fencing**：每次 journal 写（op append、manifest 写、marker 创建）前，
-  读取 lock 并校验 `ownerToken` == 当前持有者 token；不等 → 立即中止并置
-  CONFLICTED（老 owner 被接管后不能继续写）。
-- 接管：先 `kill(pid,0)` 检查旧 pid；旧 pid 不存在且 heartbeat stale →
-  允许替换 lock（新 token、epoch+1）；旧 pid 存活或无法判定 → repair 需
-  `--force`，host 永不 force。
-- 边界：锁只约束协作进程；非协作写入按 §1 best-effort。
+- 获取：`open('wx', 0600)`；心跳 5s；stale 30s；更新原子替换+fsync。
+- **接管规则（v3）**：
+  - 必须先验证旧 pid 已死亡：POSIX 比较 `/proc/<pid>` 存在性与
+    `processStartToken`（进程启动时间）；其他平台用平台等效 API；
+  - 旧 pid 存活 → repair 拒绝执行写，host 永不接管；
+  - 旧 pid 死亡 → 允许替换 lock（新 token，epoch+1）；
+  - 无法判定死亡（无等效 API）→ 只读诊断，不接管；`--force` 仅在用户
+    明确确认“进程已手工终止”后允许，并记录 warning。
+- fencing 纵深防御：每次 journal 写与 target 写前读 lock 校验 ownerToken；
+  不匹配 → 中止。该检查与后续写非原子，但活进程接管已被禁止，协作进程
+  不会出现双 owner；TOCTOU 只影响非协作写入，归入 §1 best-effort。
 
-## 10. JournalPort（EffectPorts）
+## 10. 接口
 
+### 10.1 JournalPort
 ```ts
-interface FileState { exists: boolean; hash: string | null }
-interface OpRecord { v: 1; opId: string; seq: number; kind: 'FORWARD'|'ROLLBACK';
-  phase: 'INTENDED'|'CONFIRMED'|'CANCELLED'; expected: FileState;
-  next: FileState; before: FileState; mode?: string; length?: number }
-
 interface JournalPort {
-  begin(targets: TargetSpec[]): Promise<TxId>                 // PREPARING→PREPARED
-  writeTarget(tx: TxId, rel: string, next: FileState & { data?: Uint8Array; mode?: string }): Promise<void>
-  deleteTarget(tx: TxId, rel: string): Promise<void>          // present→absent
-  commitFiles(tx: TxId): Promise<void>                        // 终检+COMMITTED marker
-  rollback(tx: TxId): Promise<void>                           // §6.3 回滚
-  scan(): Promise<RecoveryReport>                             // 只读
-  recover(): Promise<RecoveryReport>                          // RECOVERABLE 自动恢复
-  resolveConflict(tx: TxId, action: 'restore-snapshot'|'accept-current',
-                  validateBaseline: (tx: TxId) => Promise<BaselineReport>): Promise<Report>
+  begin(targets: TargetSpec[]): Promise<TxId>
+  writePresent(tx: TxId, rel: string, data: Uint8Array): Promise<void> // hash 由实现计算
+  delete(tx: TxId, rel: string): Promise<void>
+  commitFiles(tx: TxId): Promise<void>
+  rollback(tx: TxId): Promise<void>            // 自动回滚（§6.4）
+  scan(): Promise<RecoveryReport>              // 只读
+  recover(): Promise<RecoveryReport>           // 自动 RECOVERABLE
+  archiveConflict(tx: TxId): Promise<void>
+  beginResolution(tx: TxId, plan: ResolutionPlan): Promise<void>
+  resolveTarget(tx: TxId, rel: string): Promise<void> // 执行计划中该 target 的 RESOLUTION op
+  completeResolution(tx: TxId): Promise<Report>
 }
 ```
-- `writeTarget`/`deleteTarget` 内部强制 §5.2/§5.3 全顺序；调用方无法只
-  prepare 不 confirm，从而 contract test 能强制协议。
-- JournalPort **不包含业务状态机**；install-core 决定调用顺序和动作。
-- `resolveConflict` 只负责 journal 封存/回滚执行与记录；一致性校验通过
-  注入的 `validateBaseline` 完成。
+- `writePresent` 只接受 bytes；hash/next 由 JournalPort 计算，杜绝
+  `exists:true 无 data`、hash 不一致等非法输入。
+- `commitFiles` 前置：所有声明 target 最后 op CONFIRMED；否则返回
+  JOURNALLED 错误。
+- JournalPort 不编排业务校验。
 
-## 11. 文件系统前提
+### 10.2 RepairService（install-core）
+编排 `JournalPort + BaselineValidatorPort`：
+- 读 scan → 分类；
+- RECOVERABLE → recover；
+- restore-snapshot → 验证 snapshot → 生成 plan → beginResolution /
+  resolveTarget / completeResolution；
+- accept-current → archive + BaselineValidatorPort + completeResolution。
+- BaselineValidatorPort 只读：`validateCurrentProfile(): Promise<BaselineReport>`。
 
-- 支持 POSIX 与 Windows NTFS；要求 rename 同文件系统、父目录 fsync 可用。
-- target 为 symlink 时拒绝（lstat）；父目录 no-follow。
-- present→present 保留原 mode；新文件 0600；删除协议不恢复 mode。
-- 不支持无目录 fsync 语义的文件系统（检测不到时按 best-effort 记录警告）。
+## 11. 测试矩阵（自包含）
 
-## 12. 测试矩阵（M2a contract tests）
+A. 逻辑归约：
+1. before=A；`A→B CONFIRMED`、`B→C CONFIRMED`，current=C → owned=C 不冲突。
+2. `A→B→A`，current=A → owned=A，pendingRollback=false。
+3. 回滚 `B→A INTENDED` 崩溃，current=B → 计划 CONFIRMED 后继续回滚。
+4. 回滚 INTENDED 被 CANCELLED → owned 仍为 B，继续生成新回滚 op。
+5. malformed chain（expected≠前一 owned、seq 跳变、重复 CONFIRMED、
+   before≠baseline、双 pending）→ UNRECOVERABLE。
 
-除 v1 矩阵外，必须覆盖：
-1. 连续多写 `A→B→C`，在每次 INTENDED/替换/CONFIRMED 前后 kill。
-2. 正向 CONFIRMED 后回滚 INTENDED 崩溃 → reducer 仍以 owned=B 继续回滚。
-3. 回滚 CONFIRMED.next == before 的唯一匹配。
-4. absent→present、present→absent、absent→absent 拒绝；unlink 后、父
-   fsync 前崩溃。
-5. FILE_COMMITTED manifest 与 marker 四种先后组合（尤其
-   manifest=FILE_COMMITTED 且无 marker → 回滚）。
-6. manifest 缺失但 tx 目录残留 → RECOVERABLE_NOOP。
-7. JSONL 尾行截断可恢复；其他损坏 → UNRECOVERABLE。
-8. 多文件在第一/中间/最后 target 崩溃；一文件冲突时零 target 被恢复。
-9. evidence 复制/report/manifest.state 三步各自崩溃 → 最终 CONFLICTED。
-10. tombstone rename 前/后崩溃 → 幂等清理。
-11. stale lock 接管后旧 owner 再次 journal 写 → 被 fencing 拒绝。
-12. 检查→rename、终检→marker 窗口注入非协作写入 → 记录预期结果
-    （可检测或已知不可检测窗口，均需显式断言）。
-13. kill -9 矩阵 + 确定性 failpoint model test 双轨验证；不变量：
-    无 marker 永不保留 owned 写；有 marker 永不自动回滚。
+B. 物理写入：
+6. present→present / absent→present / present→absent 在每步崩溃；
+   absent→absent 拒绝。
+7. mode 保留与恢复校验；snapshot hash 校验。
+8. 非协作写入注入在检查→rename、终检→marker 窗口 → 预期 CONFLICTED
+   （可检测）或文档化不可检测窗口。
 
-## 13. 明确不在本规格范围
+C. 提交与清理：
+9. COMMITTED marker 前/后崩溃；manifest=FILE_COMMITTED 但无 marker → 回滚。
+10. OUTCOME 已写未 tombstone；tombstone rename 前/后崩溃；trash 残骸只删除。
+11. 无 manifest：空目录 → NOOP；有 ops/snapshots → UNRECOVERABLE。
 
-- 插件激活 / PENDING_ACTIVATION（另立 ACTIVATION-SPEC）。
-- inspectArtifact / tarball 校验（另立 ARTIFACT-SPEC）。
-- pnpm/dsh CLI 执行细节（PackageManagerPort）。
+D. 冲突与 repair：
+12. evidence 复制/report/state 三步各自崩溃。
+13. restore-snapshot：resolution 计划后每 target 写前/写后崩溃、二次崩溃、
+    中途新外部编辑 → RESOLUTION_CONFLICTED，进度可见，绝不报成功。
+14. snapshot 缺失/损坏 → UNRECOVERABLE_RESTORE。
+15. accept-current 校验失败 → 保持 CONFLICTED，不 UNRECOVERABLE。
+
+E. 锁：
+16. 活 pid 拒绝接管；死 pid 接管后旧 owner token 失效；
+    force 路径记录 warning；接管竞态测试。
+17. 多 tx 恢复顺序与 host 新 mutation 拒绝。
+
+F. 契约：
+18. JournalPort 非法输入与非法调用顺序（writePresent data 缺、commitFiles
+    有 pending、未 begin 等）返回 JOURNALLED。
+19. 全矩阵同时用 kill -9 与确定性 failpoint model test 双轨运行。
+20. 不变量：恢复成功返回终态后，无 marker 不保留 owned 写；有 marker 永不
+    自动回滚。
+
+## 12. 明确不在本规格范围
+- 插件激活 / PENDING_ACTIVATION（ACTIVATION-SPEC）。
+- inspectArtifact / tarball（ARTIFACT-SPEC）。
+- pnpm/dsh CLI 细节（PackageManagerPort）。
 - 备份、WebDAV、Gist。
 
-## 14. 与 PLAN-v4 状态命名映射
-
-PLAN-v4 的 `DIRTY` = 本规格 `CONFLICTED | UNRECOVERABLE`。后续 PLAN 统一
-使用本规格命名，实现与验收只使用一套状态。
+## 13. 与 PLAN-v4 状态命名映射
+PLAN-v4 的 `DIRTY` = `CONFLICTED | RESOLUTION_CONFLICTED | UNRECOVERABLE`。
+实现与验收只使用本规格状态名。
