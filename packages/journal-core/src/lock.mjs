@@ -1,6 +1,7 @@
-// S4：exclusive acquire + heartbeat CAS + dead-owner takeover（rename-to-stolen）
-import { existsSync, readFileSync, unlinkSync, renameSync, mkdirSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+// 目录锁：mkdir 原子排他；heartbeat 写在自有目录内，避免覆盖他人 owner。
+// takeover = rename(lockdir, stolen-<tag>) CAS + 复核 dead+stale + mkdir 新锁。
+import { mkdirSync, readFileSync, renameSync, rmSync, existsSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { atomicFile, fsyncDir } from './durable.mjs'
 
@@ -16,54 +17,69 @@ function ownerAlive(rec){
 function stale(rec){ return Date.now() - (rec.heartbeatAt ?? 0) > STALE_MS }
 
 export class FileLock {
-  constructor(root){ this.root=root; this.path=join(root,'lock.json'); this.record=null }
+  constructor(root){ this.root=root; this.dir=join(root,'lock'); this.ownerPath=join(this.dir,'owner.json'); this.hbPath=join(this.dir,'heartbeat.json'); this.record=null }
+
+  #readOwner(path){ try { return JSON.parse(readFileSync(path,'utf8')) } catch { return null } }
+
   acquire(scope='mutation', { wait=false } = {}){
     mkdirSync(this.root,{recursive:true,mode:0o700})
     const rec={owner:'journal-core',scope,bootId:randomBytes(8).toString('hex'),
       pid:process.pid,processStartToken:PROCESS_TOKEN,
       ownerToken:randomBytes(16).toString('hex'),epoch:1,acquiredAt:Date.now(),heartbeatAt:Date.now()}
     for(;;){
-      try { atomicFile(this.path, JSON.stringify(rec), {mode:0o600, exclusive:true}); this.record=rec; return rec }
-      catch(e){ if(e.code!=='EEXIST') throw e }
-      let cur=null; try { cur=JSON.parse(readFileSync(this.path,'utf8')) } catch {}
-      if(cur && (ownerAlive(cur) || !stale(cur))) {
-        if(!wait) throw new LockBusy('owner alive or heartbeat fresh')
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,50); continue
+      try {
+        mkdirSync(this.dir,{mode:0o700})
+        atomicFile(this.ownerPath, JSON.stringify(rec), {mode:0o600})
+        atomicFile(this.hbPath, JSON.stringify({heartbeatAt:rec.heartbeatAt}), {mode:0o600})
+        this.record=rec
+        return rec
+      } catch(e){
+        if(e.code!=='EEXIST') throw e
+        let cur=this.#readOwner(this.ownerPath)
+        if(!cur) throw new LockBusy('lock dir exists but owner unreadable')
+        if(ownerAlive(cur) || !stale(cur)){ if(!wait) throw new LockBusy('owner alive or heartbeat fresh'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,50); continue }
+        // dead+stale takeover CAS
+        const tag=randomBytes(6).toString('hex'); const stolen=this.dir+'.stolen-'+tag
+        try { renameSync(this.dir, stolen) } catch(e2){ if(e2.code==='ENOENT') continue; throw e2 }
+        const stolenOwner=this.#readOwner(join(stolen,'owner.json'))
+        if(!stolenOwner || stolenOwner.ownerToken!==cur.ownerToken || stolenOwner.processStartToken!==cur.processStartToken){
+          try{ renameSync(stolen,this.dir) }catch{}; throw new LockBusy('stolen owner changed')
+        }
+        if(ownerAlive(stolenOwner) || !stale(stolenOwner)){
+          if(!existsSync(this.dir)) try{ renameSync(stolen,this.dir) }catch{}
+          throw new LockBusy('owner revived or heartbeat fresh')
+        }
+        rec.epoch=(cur.epoch??0)+1
+        try { mkdirSync(this.dir,{mode:0o700}) } catch(e3){ if(e3.code==='EEXIST') throw new LockBusy('cas lost to another takeover'); throw e3 }
+        atomicFile(this.ownerPath, JSON.stringify(rec), {mode:0o600})
+        atomicFile(this.hbPath, JSON.stringify({heartbeatAt:rec.heartbeatAt}), {mode:0o600})
+        this.record=rec
+        return rec
       }
-      // dead + stale → takeover CAS
-      const tag=randomBytes(6).toString('hex')
-      const stolen=this.path+'.stolen-'+tag
-      try { renameSync(this.path, stolen) } catch(e2){ if(e2.code==='ENOENT') continue; throw e2 }
-      let stolenRec; try { stolenRec=JSON.parse(readFileSync(stolen,'utf8')) } catch { try{renameSync(stolen,this.path)}catch{}; throw new LockBusy('stolen lock unreadable') }
-      if(stolenRec.ownerToken!==cur.ownerToken || stolenRec.processStartToken!==cur.processStartToken){
-        try{renameSync(stolen,this.path)}catch{}; throw new LockBusy('stolen content changed')
-      }
-      if(ownerAlive(stolenRec) || !stale(stolenRec)){
-        if(!existsSync(this.path)) try{renameSync(stolen,this.path)}catch{}
-        throw new LockBusy('owner revived or heartbeat fresh')
-      }
-      rec.epoch=(cur.epoch??0)+1
-      try { atomicFile(this.path, JSON.stringify(rec), {mode:0o600, exclusive:true}); this.record=rec; return rec }
-      catch(e3){ if(e3.code==='EEXIST') throw new LockBusy('cas lost to another takeover'); throw e3 }
     }
   }
   heartbeat(){
     if(!this.record) throw new LockBusy('no lease')
+    this.fence()
     const rec={...this.record,heartbeatAt:Date.now()}
-    let cur=null; try{cur=JSON.parse(readFileSync(this.path,'utf8'))}catch{}
-    if(!cur || cur.ownerToken!==this.record.ownerToken || cur.epoch!==this.record.epoch) throw new LockFenced()
-    atomicFile(this.path, JSON.stringify(rec), {mode:0o600})
+    atomicFile(this.hbPath, JSON.stringify({heartbeatAt:rec.heartbeatAt}), {mode:0o600})
     this.record=rec
   }
   fence(){
     if(!this.record) throw new LockBusy('no lease')
-    let cur=null; try{cur=JSON.parse(readFileSync(this.path,'utf8'))}catch{}
+    const cur=this.#readOwner(this.ownerPath)
     if(!cur || cur.ownerToken!==this.record.ownerToken || cur.epoch!==this.record.epoch) throw new LockFenced()
   }
   release(){
     if(!this.record) return
-    let cur=null; try{cur=JSON.parse(readFileSync(this.path,'utf8'))}catch{}
-    if(cur && cur.ownerToken===this.record.ownerToken){ unlinkSync(this.path); fsyncDir(this.root) }
+    const cur=this.#readOwner(this.ownerPath)
+    if(cur && cur.ownerToken===this.record.ownerToken){ rmSync(this.dir,{recursive:true,force:true}); fsyncDir(this.root) }
     this.record=null
+  }
+}
+
+export function sweepLockDebris(root){
+  for(const name of readdirSync(root)){
+    if(name.startsWith('lock.stolen-')){ const p=join(root,name); try{ if(statSync(p).isDirectory()) rmSync(p,{recursive:true,force:true}) }catch{} }
   }
 }

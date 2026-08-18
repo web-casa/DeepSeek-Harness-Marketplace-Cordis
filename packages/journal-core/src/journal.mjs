@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, mkdirSync, readdirSync, statSync, copyFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { randomBytes } from 'node:crypto'
-import { atomicFile, appendRecord, marker, replaceTarget, unlinkTargetDurable, readJsonIfExists, tombstone } from './durable.mjs'
+import { atomicFile, appendRecord, marker, replaceTarget, unlinkTargetDurable, readJsonIfExists, tombstone, sweepTrash } from './durable.mjs'
 import { fileState, targetKey, sha256, modeOf } from './state.mjs'
 import { parseOpLog, reduceOps, classifyTarget } from './reducer.mjs'
 
@@ -106,6 +106,17 @@ export class Journal {
     try { report=JSON.parse(readFileSync(reportPath,'utf8')) } catch { return 'bad-report' }
     if(!report || report.v!==1 || report.txid!==tx || !Array.isArray(report.conflicts)) return 'bad-report'
     const ev=join(this.root,'conflicts',tx,'evidence')
+    if(Array.isArray(report.evidence)){
+      for(const e of report.evidence){
+        if(!e || typeof e.name!=='string' || typeof e.hash!=='string' || !Number.isInteger(e.length)) return 'bad-report'
+        const f=join(ev,e.name)
+        try {
+          if(!existsSync(f)) return 'bad-evidence'
+          const bytes=readFileSync(f)
+          if(sha256(bytes)!==e.hash || bytes.length!==e.length) return 'bad-evidence'
+        } catch { return 'bad-evidence' }
+      }
+    }
     for(const c of report.conflicts){
       if(!c || typeof c.rel!=='string' || !c.state) return 'bad-report'
       const f=join(ev,targetKey(c.rel)+'.bin')
@@ -142,6 +153,7 @@ export class Journal {
   }
 
   async recover(){
+    sweepTrash(this.root)
     const scan=this.scan(); const report=[]
     // 两阶段：先全局只读预检，再执行
     const pre=[]
@@ -235,19 +247,28 @@ export class Journal {
   }
 
   async archiveConflict(tx, conflicts){
-    const d=join(this.root,'conflicts',tx); mkdirSync(join(d,'evidence'),{recursive:true,mode:0o700})
-    const txd=this.#txDir(tx)
+    const d=join(this.root,'conflicts',tx)
+    if(existsSync(join(d,'report.json'))) throw new JournalError('JOURNALLED','conflict report already exists for tx: '+tx)
+    mkdirSync(join(d,'evidence'),{recursive:true,mode:0o700})
+    const txd=this.#txDir(tx); const entries=[]
+    const addEntry=(relPath, bytes)=>{
+      const target=join(d,'evidence',relPath)
+      mkdirSync(dirname(target),{recursive:true,mode:0o700})
+      atomicFile(target, bytes, {mode:0o600})
+      entries.push({name:relPath, hash:sha256(bytes), length:bytes.length})
+    }
     // 复制 manifest/ops/snapshots 作为证据（不修改原 journal 内容）
-    if(existsSync(join(txd,'manifest.json'))) copyFileSync(join(txd,'manifest.json'), join(d,'evidence','manifest.json'))
-    const opsDir=join(txd,'ops'); if(existsSync(opsDir)){ mkdirSync(join(d,'evidence','ops'),{recursive:true,mode:0o700}); for(const f of readdirSync(opsDir)) copyFileSync(join(opsDir,f), join(d,'evidence','ops',f)) }
-    const snapDir=join(txd,'snapshots'); if(existsSync(snapDir)){ mkdirSync(join(d,'evidence','snapshots'),{recursive:true,mode:0o700}); for(const f of readdirSync(snapDir)) copyFileSync(join(snapDir,f), join(d,'evidence','snapshots',f)) }
+    if(existsSync(join(txd,'manifest.json'))) addEntry('manifest.json', readFileSync(join(txd,'manifest.json')))
+    const opsDir=join(txd,'ops'); if(existsSync(opsDir)){ for(const f of readdirSync(opsDir)) addEntry('ops/'+f, readFileSync(join(opsDir,f))) }
+    const snapDir=join(txd,'snapshots'); if(existsSync(snapDir)){ for(const f of readdirSync(snapDir)) addEntry('snapshots/'+f, readFileSync(join(snapDir,f))) }
     for(const c of conflicts){
       const rel=c.rel; const p=this.#profilePath(rel); const st=fileState(p)
-      if(st.exists){ const bytes=readFileSync(p); atomicFile(join(d,'evidence',targetKey(rel)+'.bin'), bytes,{mode:0o600})
+      if(st.exists){ const bytes=readFileSync(p); addEntry(targetKey(rel)+'.bin', bytes)
         if(sha256(bytes)!==st.hash) throw new JournalError('EVIDENCE_BAD','evidence copy hash mismatch') }
-      else atomicFile(join(d,'evidence',targetKey(rel)+'.absent.json'), JSON.stringify({exists:false}),{mode:0o600})
+      else addEntry(targetKey(rel)+'.absent.json', Buffer.from(JSON.stringify({exists:false})))
     }
-    atomicFile(join(d,'report.json'), JSON.stringify({v:1,txid:tx,detectedAt:Date.now(),conflicts},null,2),{mode:0o600})
+    atomicFile(join(d,'evidence-manifest.json'), JSON.stringify({v:1,txid:tx,entries},null,2),{mode:0o600})
+    atomicFile(join(d,'report.json'), JSON.stringify({v:1,txid:tx,detectedAt:Date.now(),conflicts,evidence:entries},null,2),{mode:0o600})
     const m=this.#loadManifest(tx); m.state='CONFLICTED'; atomicFile(join(txd,'manifest.json'), JSON.stringify(m,null,2),{mode:0o600})
   }
 }

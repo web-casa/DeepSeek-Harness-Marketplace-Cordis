@@ -1,4 +1,4 @@
-import { openSync, writeFileSync, fsyncSync, closeSync, renameSync, unlinkSync, mkdirSync, existsSync, appendFileSync, readFileSync, chmodSync, linkSync } from 'node:fs'
+import { openSync, writeFileSync, fsyncSync, closeSync, renameSync, unlinkSync, mkdirSync, existsSync, appendFileSync, readFileSync, chmodSync, linkSync, rmSync, readdirSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { failpoint } from './failpoints.mjs'
@@ -86,4 +86,14 @@ export function tombstone(kind, dir) {
   failpoint('tombstone:after-src-fsync', { kind, dir, target })
   fsyncDir(trashRoot)
   failpoint('tombstone:after-dirfsync', { kind, dir, target })
+  rmSync(target, { recursive: true, force: true })
+}
+
+export function sweepTrash(root){
+  const trashRoot = join(root, 'trash')
+  if (!existsSync(trashRoot)) return
+  for (const name of readdirSync(trashRoot)) {
+    const p = join(trashRoot, name)
+    try { rmSync(p, { recursive: true, force: true }) } catch {}
+  }
 }

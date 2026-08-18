@@ -17,4 +17,5 @@
 - S4 部分完成：exclusive acquire / takeover CAS / heartbeat+fencing + 5 tests
 - S3 完成：ResolutionJournal restore/accept/supersede/cleanup + 8 tests
 - S5a 完成（两轮修复）：物理顺序 reducer + unified validation + durable failpoint 全边界 + 子进程 crash 测试；47 tests 通过。第三轮 codex 复审因账号 usage limit 未能执行。
-- S5b/S6 TODO
+- S5b 完成：目录锁 + evidence manifest + validation ticket + 参数化 crash 矩阵；61 tests。
+- S6 TODO

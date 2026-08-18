@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { Journal, ResolutionJournal, fingerprint } from '../src/index.js'
+import { Journal, ResolutionJournal, fingerprint, createValidationEvidence } from '../src/index.js'
 import { fileState } from '../src/state.mjs'
 
 function make(){
@@ -74,7 +74,7 @@ test('accept-current with validation evidence', async ()=>{
   const rid=await c.r.beginResolution({tx, action:'accept-current'})
   const states={}
   for(const rel of Object.keys(c.j.getBaseline(tx))) states[rel]=fileState(join(c.profile,rel))
-  await c.r.recordValidation(rid,{valid:true,fingerprint:fingerprint(states),baselineReport:{ok:true}})
+  await c.r.recordValidation(rid,createValidationEvidence({ok:true}, fingerprint(states)))
   const out=await c.r.completeResolution(rid)
   assert.equal(out.outcome,'ACCEPTED_CURRENT')
   // profile 不被修改
@@ -86,8 +86,8 @@ test('validation once-only and fingerprint mismatch', async ()=>{
   const rid=await c.r.beginResolution({tx, action:'accept-current'})
   const states={}
   for(const rel of Object.keys(c.j.getBaseline(tx))) states[rel]=fileState(join(c.profile,rel))
-  await c.r.recordValidation(rid,{valid:true,fingerprint:fingerprint(states),baselineReport:{ok:true}})
-  await assert.rejects(()=>c.r.recordValidation(rid,{valid:true,fingerprint:fingerprint(states),baselineReport:{ok:true}}), e=>e.code==='JOURNALLED')
+  await c.r.recordValidation(rid,createValidationEvidence({ok:true}, fingerprint(states)))
+  await assert.rejects(()=>c.r.recordValidation(rid,createValidationEvidence({ok:true}, fingerprint(states))), e=>e.code==='JOURNALLED')
   writeFileSync(join(c.profile,'package.json'),'X2')
   assert.equal((await c.r.completeResolution(rid)).outcome,'RESOLUTION_CONFLICTED')
 })
@@ -162,4 +162,12 @@ test('completeResolution is once-only', async ()=>{
   await c.r.resolveTarget(rid,'package.json'); await c.r.resolveTarget(rid,'pnpm-lock.yaml')
   await c.r.completeResolution(rid)
   await assert.rejects(()=>c.r.completeResolution(rid), e=>e.code==='JOURNALLED')
+})
+
+test('plain object cannot pass as validation evidence', async ()=>{
+  const c=make(); const tx=await conflictedTx(c)
+  const rid=await c.r.beginResolution({tx, action:'accept-current'})
+  const states={}
+  for(const rel of Object.keys(c.j.getBaseline(tx))) states[rel]=fileState(join(c.profile,rel))
+  await assert.rejects(()=>c.r.recordValidation(rid,{valid:true,fingerprint:fingerprint(states),baselineReport:{ok:true}}), e=>e.code==='BAD_EVIDENCE')
 })

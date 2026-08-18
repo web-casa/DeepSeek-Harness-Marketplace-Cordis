@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { atomicFile, marker, replaceTarget, unlinkTargetDurable, readJsonIfExists, tombstone, fsyncDir } from './durable.mjs'
 import { fileState, fingerprint, targetKey, sha256 } from './state.mjs'
 import { JournalError } from './journal.mjs'
+import { isValidationEvidence } from './validation.mjs'
 
 export class ResolutionError extends JournalError {}
 
@@ -124,7 +125,8 @@ export class ResolutionJournal {
     this.lock?.fence()
     const m=this.#manifest(rid)
     if(m.action!=='accept-current') throw new ResolutionError('BAD_ACTION','recordValidation only for accept-current')
-    if(evidence?.valid!==true) throw new ResolutionError('BAD_EVIDENCE','evidence.valid must be true')
+    if(!isValidationEvidence(evidence)) throw new ResolutionError('BAD_EVIDENCE','evidence must be a ValidationEvidence ticket')
+    if(evidence.valid!==true) throw new ResolutionError('BAD_EVIDENCE','evidence.valid must be true')
     if(evidence.baselineReport?.ok!==true) throw new ResolutionError('BAD_EVIDENCE','evidence.baselineReport.ok must be true')
     const currentFp=this.#currentFingerprint(m.txid)
     if(evidence.fingerprint!==currentFp) throw new ResolutionError('FINGERPRINT_MISMATCH','current fingerprint does not match evidence')

@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
-import { Journal, JournalError, FileLock, LockBusy, sha256 } from '../src/index.js'
+import { Journal, JournalError, FileLock, LockBusy, sha256, fileState } from '../src/index.js'
 import { setFailpoint, clearFailpoints } from '../src/failpoints.mjs'
 
 afterEach(()=>clearFailpoints())
@@ -115,7 +115,8 @@ test('fenced lock blocks journal writes', async ()=>{
   const guarded=new Journal({journalRoot, profileRoot:j.profile, lock})
   const tx=await guarded.begin(['package.json'])
   // 替换 lock 使 token 失效
-  writeFileSync(join(journalRoot,'lock.json'), JSON.stringify({owner:'x',pid:process.pid,processStartToken:'x',ownerToken:'other',epoch:2,heartbeatAt:Date.now()}))
+  mkdirSync(join(journalRoot,'lock'),{recursive:true})
+  writeFileSync(join(journalRoot,'lock','owner.json'), JSON.stringify({owner:'x',pid:process.pid,processStartToken:'x',ownerToken:'other',epoch:2,heartbeatAt:Date.now()}))
   await assert.rejects(()=>guarded.writePresent(tx,'package.json',Buffer.from('A1')), e=>e.code==='LOCK_FENCED')
 })
 
@@ -188,4 +189,13 @@ test('conflict report with missing evidence is not silently trusted', async ()=>
   rmSync(join(j.root,'conflicts',tx,'evidence'),{recursive:true,force:true})
   const report=await j.recover()
   assert.equal(report[0].result,'BAD_EVIDENCE')
+})
+
+test('conflict archive is once-only', async ()=>{
+  const {j,profile}=make()
+  const tx=await j.begin(['package.json'])
+  await j.writePresent(tx,'package.json',Buffer.from('A1'))
+  writeFileSync(join(profile,'package.json'),'X')
+  await j.recover()
+  await assert.rejects(()=>j.archiveConflict(tx,[{rel:'package.json',state:fileState(join(profile,'package.json'))}]), e=>e.code==='JOURNALLED')
 })
