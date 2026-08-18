@@ -162,7 +162,10 @@ export class Journal {
   }
 
   async recoverReport(){ return makeRecoveryReport(await this.#recoverEntries()) }
-  async #safeArchive(tx, conflicts){ try { await this.archiveConflict(tx, conflicts) } catch(e) { if(e.code==='JOURNALLED') return e.code; throw e } }
+  async #safeArchive(tx, conflicts){
+    try { await this.archiveConflict(tx, conflicts); return null }
+    catch(e) { if(e.code==='FP_INJECTED') throw e; console.warn(`[journal-core] archiveConflict failed for ${tx}: ${e.code ?? e.message}`); return e.code ?? 'EVIDENCE_ERROR' }
+  }
   async recover(){ return this.#recoverEntries() }
   async #recoverEntries(){
     sweepLockDebris(this.root)
