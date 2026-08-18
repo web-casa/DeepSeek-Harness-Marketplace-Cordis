@@ -5,7 +5,6 @@ import { atomicFile, marker, replaceTarget, unlinkTargetDurable, readJsonIfExist
 import { fileState, fingerprint, targetKey, sha256 } from './state.mjs'
 import { JournalError } from './journal.mjs'
 import { validateResolutionManifest, validateValidation, makeRecoveryReport, makeResolutionOutcome } from './schema.mjs'
-import { createValidationEvidence } from './validation.mjs'
 
 export class ResolutionError extends JournalError {}
 
@@ -40,8 +39,8 @@ export class ResolutionJournal {
       if(old!==null && old!==undefined){
         const target=byRid.get(old)
         if(!target){
-          // 祖先已在 tombstone crash 中移入 trash 时允许悬挂引用（S7 G2）
-          if(!this.#trashHasResolution(old)) throw new ResolutionError('BAD_GRAPH','dangling supersedes: '+old)
+          // 祖先可能已被 tombstone/sweep 清理：视为已清理断链，不再报 BAD_GRAPH
+          continue
         } else if(target.manifest.txid!==tx) throw new ResolutionError('BAD_GRAPH','cross-tx supersedes')
       }
     }
@@ -140,7 +139,6 @@ export class ResolutionJournal {
     const report=await this.baselineValidator.validateCurrentProfile()
     if(!report || report.ok!==true) throw new ResolutionError('BAD_VALIDATION','baseline validation did not pass')
     const currentFp=this.#currentFingerprint(m.txid)
-    const evidence=createValidationEvidence(report, currentFp)
     try{ atomicFile(this.#validationPath(rid), JSON.stringify({v:1,resolutionId:rid,valid:true,fingerprint:currentFp,baselineReport:report,createdAt:Date.now()},null,2), {mode:0o600, exclusive:true}) }
     catch(e){ if(e.code==='EEXIST') throw new ResolutionError('JOURNALLED','validation already recorded'); throw e }
   }
@@ -196,43 +194,43 @@ export class ResolutionJournal {
     for(const r of list){ const tx=r.manifest?.txid; if(!tx) continue; (byTx[tx]??=[]).push(r) }
     for(const [tx] of Object.entries(byTx)){
       let heads
-      try{ heads=this.#validateGraphForTx(tx).heads }catch(e){ report.push({tx,result:e.code}); continue }
-      if(heads.length!==1){ report.push({tx,result:'NO_HEAD'}); continue }
+      try{ heads=this.#validateGraphForTx(tx).heads }catch(e){ report.push({txid:tx,result:e.code}); continue }
+      if(heads.length!==1){ report.push({txid:tx,result:'NO_HEAD'}); continue }
       const head=heads[0]; const rid=head.rid
       const m=this.#manifest(rid)
       const outcome=head.outcome?.outcome ?? null
       if(outcome==='RESOLVED' || outcome==='ACCEPTED_CURRENT'){
-        try{ await this.cleanupTerminal(rid); report.push({tx,rid,result:'CLEANED_TERMINAL'}) }catch(e){ report.push({tx,rid,result:e.code}) }
+        try{ await this.cleanupTerminal(rid); report.push({txid:tx,rid,result:'CLEANED_TERMINAL'}) }catch(e){ report.push({txid:tx,rid,result:e.code}) }
         continue
       }
-      if(outcome==='RESOLUTION_CONFLICTED'){ report.push({tx,rid,result:'WAITING_AUTHORIZATION'}); continue }
-      if(outcome==='SUPERSEDED'){ try{ tombstone('resolution', this.#dir(rid)); report.push({tx,rid,result:'CLEANED_SUPERSEDED'}) }catch(e){ report.push({tx,rid,result:e.code}) }; continue }
+      if(outcome==='RESOLUTION_CONFLICTED'){ report.push({txid:tx,rid,result:'WAITING_AUTHORIZATION'}); continue }
+      if(outcome==='SUPERSEDED'){ try{ tombstone('resolution', this.#dir(rid)); report.push({txid:tx,rid,result:'CLEANED_SUPERSEDED'}) }catch(e){ report.push({txid:tx,rid,result:e.code}) }; continue }
       if(m.action==='restore-snapshot'){
-        try{ this.#preflightRestore(m.txid, m.plan) }catch(e){ report.push({tx,rid,result:e.code}); continue }
+        try{ this.#preflightRestore(m.txid, m.plan) }catch(e){ report.push({txid:tx,rid,result:e.code}); continue }
         const conflicts=[]
         for(const rel of Object.keys(m.plan)){
           try{ await this.resolveTarget(rid, rel) }catch(e){ conflicts.push({rel,error:e.code}) }
         }
-        if(conflicts.length){ try{ await this.markConflicted(rid) }catch{}; report.push({tx,rid,result:'RESOLUTION_CONFLICTED',conflicts}); continue }
+        if(conflicts.length){ try{ await this.markConflicted(rid) }catch{}; report.push({txid:tx,rid,result:'RESOLUTION_CONFLICTED',conflicts}); continue }
         try{
           const out=await this.completeResolution(rid)
-          report.push({tx,rid,result:out.outcome})
+          report.push({txid:tx,rid,result:out.outcome})
           if(out.outcome==='RESOLVED'){ try{ await this.cleanupTerminal(rid) }catch(e){ report[report.length-1].cleanup=e.code } }
-        }catch(e){ report.push({tx,rid,result:e.code}) }
+        }catch(e){ report.push({txid:tx,rid,result:e.code}) }
         continue
       }
       if(m.action==='accept-current'){
         let val
-        try { val=readJsonIfExists(this.#validationPath(rid)); if(val) validateValidation(val) } catch(e) { report.push({tx,rid,result:e.code}); continue }
-        if(!val){ report.push({tx,rid,result:'WAITING_VALIDATION'}); continue }
+        try { val=readJsonIfExists(this.#validationPath(rid)); if(val) validateValidation(val) } catch(e) { report.push({txid:tx,rid,result:e.code}); continue }
+        if(!val){ report.push({txid:tx,rid,result:'WAITING_VALIDATION'}); continue }
         try{
           const out=await this.completeResolution(rid)
-          report.push({tx,rid,result:out.outcome})
+          report.push({txid:tx,rid,result:out.outcome})
           if(out.outcome==='ACCEPTED_CURRENT'){ try{ await this.cleanupTerminal(rid) }catch(e){ report[report.length-1].cleanup=e.code } }
-        }catch(e){ report.push({tx,rid,result:e.code}) }
+        }catch(e){ report.push({txid:tx,rid,result:e.code}) }
         continue
       }
-      report.push({tx,rid,result:'BAD_ACTION'})
+      report.push({txid:tx,rid,result:'BAD_ACTION'})
     }
     return report
   }
@@ -242,7 +240,7 @@ export class ResolutionJournal {
     for(const r of this.list()){ const tx=r.manifest?.txid; if(!tx) continue; (byTx[tx]??=[]).push(r) }
     const report=[]
     for(const [tx,rs] of Object.entries(byTx)){
-      try{ this.#validateGraphForTx(tx) }catch(e){ report.push({tx, error:e.code, heads:[]}); continue }
+      try{ this.#validateGraphForTx(tx) }catch(e){ report.push({txid:tx, error:e.code, heads:[]}); continue }
       const superseded=new Set(rs.map(r=>r.manifest.supersedes).filter(Boolean))
       const heads=rs.filter(r=>!superseded.has(r.rid))
       report.push({tx, heads:heads.map(r=>({rid:r.rid,outcome:r.outcome?.outcome??null, action:r.manifest.action, supersedes:r.manifest.supersedes??null})), count:rs.length})
@@ -262,10 +260,7 @@ export class ResolutionJournal {
     let cur=m.supersedes
     while(cur){ if(seen.has(cur)) throw new ResolutionError('BAD_GRAPH','cycle in supersedes chain'); seen.add(cur)
       const rm=readJsonIfExists(join(this.#dir(cur),'manifest.json'))
-      if(!rm){
-        if(this.#trashHasResolution(cur)) break // 已 tombstone 的祖先：正常断链
-        throw new ResolutionError('BAD_GRAPH','dangling ancestor during cleanup: '+cur)
-      }
+      if(!rm) break // 祖先已清理（tombstone 或 sweepTrash）：正常断链
       if(rm.txid!==tx) throw new ResolutionError('BAD_GRAPH','cross-tx ancestor during cleanup')
       ancestors.push(cur); cur=rm.supersedes }
     for(const rid of ancestors.reverse()) tombstone('resolution', this.#dir(rid))

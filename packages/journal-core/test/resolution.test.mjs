@@ -192,3 +192,12 @@ test('recover() completes validated accept-current', async ()=>{
   assert.equal(report[0].result,'ACCEPTED_CURRENT')
   assert.equal(existsSync(join(c.root,'resolutions',rid)),false)
 })
+
+test('resolution recoverReport returns valid versioned schema', async ()=>{
+  const c=make(); const tx=await conflictedTx(c)
+  const rid=await c.r.beginResolution({tx, action:'restore-snapshot', plan:restorePlan(c,tx)})
+  const report=await c.r.recoverReport()
+  assert.equal(report.v,1)
+  assert.ok(report.entries.length>=1)
+  assert.ok(report.entries.every(e=>typeof e.txid==='string'))
+})

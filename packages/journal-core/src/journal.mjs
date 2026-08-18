@@ -18,6 +18,7 @@ export class Journal {
   #profilePath(rel){ return join(this.profile, rel) }
 
   async begin(targets) {
+    if (!Array.isArray(targets) || targets.length === 0) throw new JournalError('BAD_TARGETS', 'targets must not be empty')
     this.lock?.fence()
     const active = this.scan().txs.filter(t => !t.committed && !(t.outcome && t.outcome.outcome==='ROLLED_BACK'))
     if (active.length > 0) throw new JournalError('ACTIVE_TX', 'an active journal transaction already exists: ' + active.map(t=>t.txid).join(','))
@@ -40,7 +41,11 @@ export class Journal {
     try { return validateManifest(raw) } catch(e) { throw new JournalError('BAD_MANIFEST', e.message) } }
   #opsPath(tx,rel){ return join(this.#txDir(tx),'ops',targetKey(rel)+'.jsonl') }
   #parseTarget(tx,rel){ const p=this.#opsPath(tx,rel); const lines=existsSync(p)?readFileSync(p,'utf8').split('\n'):[]
-    try { return parseOpLog(lines, { txid:tx, rel }) } catch(e) { throw new JournalError(e.code ?? 'BAD_OP', e.message) } }
+    try {
+      const parsed=parseOpLog(lines, { txid:tx, rel })
+      if(parsed.truncatedTail) console.warn(`[journal-core] ignoring truncated op tail for tx=${tx} rel=${rel}`)
+      return parsed
+    } catch(e) { throw new JournalError(e.code ?? 'BAD_OP', e.message) } }
   #validatedTarget(tx,rel){ const parsed=this.#parseTarget(tx,rel); const baseline=this.#loadManifest(tx).targets[rel]
     return reduceOps(parsed, baseline) }
   #ownedBefore(tx,rel){ return this.#validatedTarget(tx,rel).owned }
@@ -157,6 +162,7 @@ export class Journal {
   }
 
   async recoverReport(){ return makeRecoveryReport(await this.#recoverEntries()) }
+  async #safeArchive(tx, conflicts){ try { await this.archiveConflict(tx, conflicts) } catch(e) { if(e.code==='JOURNALLED') return e.code; throw e } }
   async recover(){ return this.#recoverEntries() }
   async #recoverEntries(){
     sweepLockDebris(this.root)
@@ -189,7 +195,7 @@ export class Journal {
           const cur=fileState(this.#profilePath(rel))
           if(v.pending || cur.hash!==v.owned.hash || cur.exists!==v.owned.exists) bad.push(rel)
         }
-        if(bad.length){ await this.archiveConflict(p.t.txid,bad.map(rel=>({rel,state:fileState(this.#profilePath(rel))}))); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue }
+        if(bad.length){ await this.#safeArchive(p.t.txid,bad.map(rel=>({rel,state:fileState(this.#profilePath(rel))}))); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue }
         if(p.t.outcomeInvalid){ report.push({txid:p.t.txid,result:'BAD_OUTCOME'}); continue }
         if(p.t.outcome && p.t.outcome.outcome!=='COMMITTED'){ report.push({txid:p.t.txid,result:'BAD_OUTCOME'}); continue }
         if(!p.t.outcome) atomicFile(join(this.#txDir(p.t.txid),'OUTCOME.json'), JSON.stringify({v:1,txid:p.t.txid,outcome:'COMMITTED'}),{mode:0o600})
@@ -197,12 +203,12 @@ export class Journal {
         report.push({txid:p.t.txid,result:'COMMITTED_OK'})
         continue
       }
-      if(p.conflicts.length){ await this.archiveConflict(p.t.txid, p.conflicts); report.push({txid:p.t.txid,result:'CONFLICTED',conflicts:p.conflicts}); continue }
+      if(p.conflicts.length){ await this.#safeArchive(p.t.txid, p.conflicts); report.push({txid:p.t.txid,result:'CONFLICTED',conflicts:p.conflicts}); continue }
       // Phase 2：每个 planned append 前复核 current
       for(const [rel,r] of Object.entries(p.classified)){
-        if(r.pendingAction==='CANCELLED'){ const cur=fileState(this.#profilePath(rel)); if(cur.hash!==r.pending.expected.hash||cur.exists!==r.pending.expected.exists){ await this.archiveConflict(p.t.txid,[{rel,state:cur}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue outer }
+        if(r.pendingAction==='CANCELLED'){ const cur=fileState(this.#profilePath(rel)); if(cur.hash!==r.pending.expected.hash||cur.exists!==r.pending.expected.exists){ await this.#safeArchive(p.t.txid,[{rel,state:cur}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue outer }
           this.#appendPhase(p.t.txid,rel,r.pending,'CANCELLED') }
-        if(r.pendingAction==='CONFIRMED'){ const cur=fileState(this.#profilePath(rel)); if(cur.hash!==r.pending.next.hash||cur.exists!==r.pending.next.exists){ await this.archiveConflict(p.t.txid,[{rel,state:cur}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue outer }
+        if(r.pendingAction==='CONFIRMED'){ const cur=fileState(this.#profilePath(rel)); if(cur.hash!==r.pending.next.hash||cur.exists!==r.pending.next.exists){ await this.#safeArchive(p.t.txid,[{rel,state:cur}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue outer }
           this.#appendPhase(p.t.txid,rel,r.pending,'CONFIRMED') }
       }
       const rollback=[]
@@ -212,13 +218,13 @@ export class Journal {
       }
       for(const rel of rollback){
         try{ await this.#rollbackTarget(p.t.txid,rel,p.m) }
-        catch(e){ if(e.code==='FP_INJECTED') throw e; await this.archiveConflict(p.t.txid,[{rel,state:fileState(this.#profilePath(rel))}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue outer }
+        catch(e){ if(e.code==='FP_INJECTED') throw e; await this.#safeArchive(p.t.txid,[{rel,state:fileState(this.#profilePath(rel))}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue outer }
       }
       // 最终复核：所有 target 必须等于 baseline 才允许宣告 ROLLED_BACK
       for(const rel of Object.keys(p.m.targets)){
         const cur=fileState(this.#profilePath(rel)); const b=p.m.targets[rel].state
         if(cur.exists!==b.exists || cur.hash!==b.hash){
-          await this.archiveConflict(p.t.txid,[{rel,state:cur}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue outer
+          await this.#safeArchive(p.t.txid,[{rel,state:cur}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue outer
         }
       }
       atomicFile(join(this.#txDir(p.t.txid),'OUTCOME.json'), JSON.stringify({v:1,txid:p.t.txid,outcome:'ROLLED_BACK'}),{mode:0o600})

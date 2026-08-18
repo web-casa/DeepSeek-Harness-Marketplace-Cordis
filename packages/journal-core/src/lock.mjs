@@ -56,7 +56,7 @@ export class FileLock {
         if(e.code!=='EEXIST') throw e
         let cur=this.#readOwner(this.ownerPath)
         if(!cur) throw new LockBusy('lock dir exists but owner unreadable')
-        if(ownerAlive(cur) || !stale(cur)){ if(!wait) throw new LockBusy('owner alive or heartbeat fresh'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,50); continue }
+        if(ownerAlive(cur) || !stale(cur)){ if(!wait) throw new LockBusy('owner alive or heartbeat fresh'); /* wait 模式阻塞主线程 50ms；仅用于短命 CLI，长驻进程应自行轮询/重试。 */ Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,50); continue }
         // dead+stale takeover CAS
         const tag=randomBytes(6).toString('hex'); const stolen=this.dir+'.stolen-'+tag
         try { renameSync(this.dir, stolen) } catch(e2){ if(e2.code==='ENOENT') continue; throw e2 }

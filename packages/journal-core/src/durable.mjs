@@ -1,4 +1,4 @@
-import { openSync, writeFileSync, fsyncSync, closeSync, renameSync, unlinkSync, mkdirSync, existsSync, appendFileSync, readFileSync, chmodSync, linkSync, rmSync, readdirSync } from 'node:fs'
+import { openSync, writeFileSync, fsyncSync, closeSync, renameSync, unlinkSync, mkdirSync, existsSync, appendFileSync, readFileSync, chmodSync, linkSync, rmSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { failpoint } from './failpoints.mjs'
@@ -101,11 +101,14 @@ export function tombstone(kind, dir) {
   rmSync(target, { recursive: true, force: true })
 }
 
-export function sweepTrash(root){
+export function sweepTrash(root, { olderThanMs = 60 * 60 * 1000 } = {}){
   const trashRoot = join(root, 'trash')
   if (!existsSync(trashRoot)) return
   for (const name of readdirSync(trashRoot)) {
     const p = join(trashRoot, name)
-    try { rmSync(p, { recursive: true, force: true }) } catch {}
+    try {
+      if (Date.now() - statSync(p).mtimeMs < olderThanMs) continue // 保留新鲜残骸供断链恢复
+      rmSync(p, { recursive: true, force: true })
+    } catch {}
   }
 }

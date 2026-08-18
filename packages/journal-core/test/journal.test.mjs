@@ -216,3 +216,8 @@ test('recoverReport returns versioned schema', async ()=>{
   assert.equal(report.v,1)
   assert.ok(Array.isArray(report.entries))
 })
+
+test('begin rejects empty targets', async ()=>{
+  const {j}=make()
+  await assert.rejects(()=>j.begin([]), e=>e.code==='BAD_TARGETS')
+})

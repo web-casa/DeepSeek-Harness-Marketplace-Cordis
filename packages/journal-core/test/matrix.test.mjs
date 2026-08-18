@@ -205,6 +205,16 @@ test('G2: ancestor cleanup crash after first tombstone -> recover finishes', asy
   const { readdirSync } = await import('node:fs')
   assert.equal(readdirSync(join(c.root,'resolutions')).length,0)
 })
+test('G2 regression: real restart order journal.recover before resolution.recover', async ()=>{
+  const c=setup(); assert.equal(await crash('ancestor-cleanup-after-rename',c),43)
+  const j=new Journal({journalRoot:c.root,profileRoot:c.profile})
+  await j.recover() // 真实重启顺序：先普通 journal 恢复与 sweep
+  const { ResolutionJournal } = await import('../src/resolution.mjs')
+  const report=await new ResolutionJournal(j).recover()
+  assert.equal(report[0].result,'CLEANED_TERMINAL')
+  const { readdirSync } = await import('node:fs')
+  assert.equal(readdirSync(join(c.root,'resolutions')).length,0)
+})
 test('matrix: committed recover crash after tombstone rename -> sweep cleans', async ()=>{
   const c=setup(); assert.equal(await crash('tombstone-after-rename',c),43)
   const j=new Journal({journalRoot:c.root,profileRoot:c.profile})
