@@ -1,214 +1,228 @@
-# cordis-mp 持久化事务 Journal 正式规格 v3
+# cordis-mp 持久化事务 Journal 正式规格 v4
 
-> 状态：v3，待 Codex 第三轮 review
-> v3 修订：修复 v2 评审 4 个阻断项：
-> ① reducer 拆为无副作用逻辑归约 + 物理 current 判定，支持 A→B→C 与回滚二次崩溃；
-> ② restore-snapshot 改为独立 RESOLUTION 事务，允许持久化进度但绝不虚报成功；
-> ③ 锁规则改为“活进程禁止接管”，token fencing 只作纵深防御并明确 TOCTOU 边界；
-> ④ 扫描优先级明确：tombstone → OUTCOME → COMMITTED marker → reducer，清理双目录 fsync。
+> 状态：v4，待 Codex review
+> v4 依据：S5b（独立 resolution journal 原型）、S5c（dead-owner takeover
+> CAS 原型）实测结果；修复 v3 评审 4 个阻断项。
 
 ## 1. 范围与保证
 
 本规格定义 cordis-mp mutation 对 profile 文本文件写入的崩溃恢复协议。
-target rel 路径封闭 allowlist：`package.json`、`pnpm-lock.yaml`、
+target rel 封闭 allowlist：`package.json`、`pnpm-lock.yaml`、
 `cordis.patch.yml`、`.cordis-mp/state.json`。
 
-保证分级：
-- **协作保证**：遵守 §9 锁规则的进程之间不存在静默覆盖；锁禁止活进程被
-  force 接管，因此旧 owner 恢复后继续写的情况被排除。
-- **非协作 best-effort**：不参与锁的外部 `dsh plugin`/手工编辑通过写前检查
-  检测；不可检测窗口为“检查后到 rename/unlink 前”与“终检后到 marker 前”。
-  检测到即 CONFLICTED 并保全证据。
-- **平台分级**：POSIX（父目录 fsync 可用）为 FULL durability；其他平台
-  （含 Windows 未实现目录 FlushFileBuffers 时）为 BEST_EFFORT，诊断中明示。
+- **协作保证**：遵守 §9 锁协议的进程之间单 owner、无静默覆盖。
+- **非协作 best-effort**：外部写入通过写前/终检检测；不可检测窗口为
+  “检查后到 rename/unlink 前”、“终检后到 marker 前”。检测到即 CONFLICTED。
+- **平台分级**：
+  - `FULL`：POSIX，具备同文件系统 rename、目录 fsync、进程存活与启动时间
+    判定、原子 rename CAS；
+  - `BEST_EFFORT`：不具备上述全部能力时降级，诊断明示，不承诺 FULL。
 
 ## 2. 基本类型
 
 - `FileState = { exists: boolean, hash: string | null }`；存在时
-  `hash="sha256:<hex>"`，不存在时 `exists:false, hash:null`。
-- `FileMeta = FileState & { mode?: string }`（mode 记录 before 权限）。
-- `targetKey = sha256(rel)`。
-- `opId = "<txid>-<seq>"`。
+  `hash="sha256:<hex>"`；不存在 `exists:false, hash:null`。
+- `FileMeta = { state: FileState, mode?: string }`。
+- `targetKey = sha256(rel)`；`opId = "<txid>-<seq>"`。
 
 ## 3. 目录布局
 
 ```
 profiles/web/.cordis-mp/
   lock.json
-  journal/<txid>/{manifest.json, snapshots/<key>.bin, ops/<key>.jsonl,
-                 COMMITTED, OUTCOME.json}
-  conflicts/<txid>/{evidence/..., report.json, accepted-<ts>/...}
-  trash/<txid>-<ts>/
+  journal/<txid>/
+    manifest.json           # schemaVersion=1，含 baseline FileMeta[]
+    snapshots/<key>.bin     # before 内容；before absent 不落盘
+    ops/<key>.jsonl         # 普通 op 日志
+    COMMITTED               # 提交唯一权威 marker
+    OUTCOME.json
+  resolutions/<rid>/
+    manifest.json           # action + immutable plan
+    ops/<key>.json          # 每 target 一个 op（非 JSONL，原子替换）
+    confirmed/<key>         # 每 target 确认 marker
+    OUTCOME.json
+  conflicts/<txid>/...
+  trash/<txid>-<ts>/  trash/<rid>-<ts>/
 ```
 
-journal/trash/conflicts 0700；文件 0600；父目录 lstat no-follow。
+journal/resolutions/trash/conflicts 0700；文件 0600；父目录 lstat no-follow。
 
-## 4. 状态机
+## 4. 普通事务状态机
 
 ```
 PREPARING → PREPARED → MUTATING → FILE_COMMITTED → CLEANED
                               ↘ ROLLING_BACK → ROLLED_BACK → CLEANED
 任意态 ──冲突──→ CONFLICTED
-CONFLICTED ──用户 authorize──→ RESOLVING → RESOLVED|RESOLUTION_CONFLICTED
-manifest 损坏/未知 schema/无法解释日志 ──→ UNRECOVERABLE
+manifest 损坏/未知 schema/日志链校验失败 ──→ UNRECOVERABLE
 ```
 
-- `FILE_COMMITTED` 仅是 manifest 信息；**COMMITTED marker 是提交唯一权威**。
-- `ROLLING_BACK`：自动回滚 op 已 INTENDED。
-- `RESOLVING`：用户授权的 restore-snapshot 事务执行中；允许持久化进度，
-  只有全部 target 回到 before 才写 `OUTCOME=RESOLVED`。
+- COMMITTED marker 是提交唯一权威；manifest.state=FILE_COMMITTED 仅信息。
+- PLAN-v4 的 `DIRTY` = `CONFLICTED | RESOLUTION_CONFLICTED | UNRECOVERABLE`。
 
-## 5. Op 日志协议
+## 5. 普通 op 协议
 
-### 5.1 op schema
+### 5.1 op schema 与结构不变量
 ```json
 { "v":1, "opId":"<txid>-3", "seq":3,
-  "kind":"FORWARD"|"ROLLBACK"|"RESOLUTION",
+  "kind":"FORWARD"|"ROLLBACK",
   "phase":"INTENDED"|"CONFIRMED"|"CANCELLED",
   "expected":{"exists":true,"hash":"sha256:B"},
   "next":{"exists":true,"hash":"sha256:C"},
   "before":{"exists":true,"hash":"sha256:A"},
   "mode":"0644","length":123 }
 ```
-- `before` 必须等于 manifest baseline 的 before；
-- 每 target 的 op 序列按 seq 递增；同 opId 只允许
-  `INTENDED→CONFIRMED` 或 `INTENDED→CANCELLED`；重复 CONFIRMED 非法。
+解析与校验（任一失败 → UNRECOVERABLE）：
+- `op.before == manifest.baseline[rel].state`；
+- 首 op `expected == before`；后续 op `expected == 前一逻辑 owned`；
+- phase 只允许 `INTENDED→CONFIRMED|CANCELLED`，同 opId 禁止重复 CONFIRMED；
+- seq 连续递增；opId/targetKey/kind/mode/length/hash 一致性；
+- 每 target 至多一个 pending INTENDED（位于日志末尾）；
+- JSONL 允许忽略**唯一**的末尾截断行并告警；其余损坏 → UNRECOVERABLE。
 
-### 5.2 写协议（JournalPort.writePresent / delete 内部执行）
+### 5.2 写协议（writePresent/delete 内部执行）
 1. 追加 INTENDED（append+fsync file+fsync dir）；
-2. 锁校验 + 乐观检查：current == expected，否则 CONFLICTED 不写；
-3. 替换：
-   - present→present：tmp 同目录随机名 `wx`，写 bytes，**在 fsync 前设置
-     before.mode**，fsync file，rename，fsync 父目录；
-   - absent→present：同上，mode 0600；
-   - present→absent：unlink + fsync 父目录；
-4. 复读校验 current == next，否则 CONFLICTED；
-5. 追加 CONFIRMED。
+2. 锁 token 校验 + 乐观检查 current==expected，否则 CONFLICTED；
+3. 替换：present→present 用 tmp `wx`、写 bytes、**设置 before.mode**、
+   fsync file、rename、fsync dir；absent→present mode=0600；
+   present→absent = unlink + fsync dir；absent→absent 拒绝；
+4. 复读 current==next，否则 CONFLICTED；
+5. 追加 CONFIRMED（append+fsync+fsync dir）。
 
 ### 5.3 提交
-1. 每个 target 最后 op 必须 CONFIRMED，无 pending INTENDED；
+1. 所有声明 target 最后 op CONFIRMED，无 pending INTENDED；
 2. 复读 current == 最后 CONFIRMED.next；
-3. 全等 → 创建 COMMITTED marker（tmp+rename+fsync 目录）；
-4. 写 manifest.state=FILE_COMMITTED（仅信息，允许滞后）。
+3. 全等 → COMMITTED marker（tmp+rename+fsync dir）；
+4. 写 manifest.state=FILE_COMMITTED。
 
-## 6. 恢复算法
+## 6. 普通事务恢复
 
-### 6.1 扫描优先级（v3 新增，逐条短路）
-1. `trash/*` 存在 → 只继续递归删除，不解释内容。
-2. `journal/<txid>/OUTCOME.json` 有效 → 按 OUTCOME 续做：
-   - `ROLLED_BACK|COMMITTED|ACCEPTED_CURRENT` → tombstone；
-   - `RESOLVING|RESOLUTION_CONFLICTED` → 进入 §7 resolution 恢复。
-3. `COMMITTED` marker 存在 → §6.4，永不回滚。
-4. 否则 → §6.2/§6.3 未提交路径。
-5. `journal/<txid>` 存在但无 manifest：
-   - 目录为空或仅含 `*.tmp` → RECOVERABLE_NOOP 删除；
-   - 含 snapshots/ops/marker 等 → UNRECOVERABLE（半残 journal）。
+### 6.1 扫描优先级（决策表，逐条短路）
+1. `trash/*` → 只继续删除；
+2. `resolutions/<rid>` 存在 → 走 §7 resolution 恢复（先于普通 journal）；
+3. `journal/<txid>/conflict report`（`conflicts/<txid>/report.json`）存在 →
+   权威 CONFLICTED，**不自动恢复**（即使 current 碰巧回到 owned），只允许
+   repair action；
+4. `journal/<txid>/OUTCOME.json`：
+   - 有效且为 `ROLLED_BACK|COMMITTED|ACCEPTED_CURRENT` → tombstone；
+   - 有效且为其他已知值 → 按对应协议；
+   - 缺失 → 继续；无效/截断/未知枚举 → UNRECOVERABLE；
+5. `COMMITTED` marker 存在 → 提交路径，永不回滚；
+6. manifest 不存在：目录空或仅 `*.tmp` → RECOVERABLE_NOOP 删除；否则
+   UNRECOVERABLE；
+7. 否则 → 未提交路径 §6.2–§6.4。
 
-### 6.2 纯逻辑归约（无副作用，不读 current）
-对每 target 解析 op 日志并校验链式不变量：
-- `op.before == baseline.before`；
-- 首 op `expected == baseline.before`；后续 op `expected == 前一逻辑 owned`；
-- phase 转移合法；seq 连续；kind 参与转移：
-  - `CONFIRMED` ⇒ owned = op.next；
-  - `CANCELLED` ⇒ owned 不变；
-  - `INTENDED` 必须是最后一条（至多一个 pending）。
-- 校验失败 → UNRECOVERABLE（不是冲突）。
+### 6.2 纯逻辑归约（无副作用）
+解析 op 链并按 §5.1 校验；依次归约：
+- `CONFIRMED` ⇒ owned=op.next；
+- `CANCELLED` ⇒ owned 不变；
+- 末尾 `INTENDED` 保留为 pending（最多一个）。
+输出 `lastConfirmedOwned`、`pending`。
 
-输出：`lastConfirmedOwned`（最后一个 CONFIRMED 的 next，无则 before）、
-`pending`（末尾未决 INTENDED 或 null）。
-
-### 6.3 物理 current 判定（仅用于最后状态）
-- 无 pending：`current == lastConfirmedOwned` → consistent，否则 CONFLICT。
+### 6.3 物理 current 判定（只判断最终状态）
+- 无 pending：`current == owned` → consistent；否则 CONFLICT。
 - 有 pending：
-  - `current == pending.expected`（= 归约 owned）→ 计划追加 CANCELLED；
-  - `current == pending.next` → 计划追加 CONFIRMED，owned=pending.next；
+  - `current == pending.expected` → 计划追加 CANCELLED，owned 不变；
+  - `current == pending.next` → 计划追加 CONFIRMED，owned=next；
   - 其他 → CONFLICT。
-- 归约结果 = `owned`；`pendingRollback = owned != before`。
+历史 CONFIRMED 不与 current 逐条比较（`A→B→C` 不误判）。
 
-说明：历史 CONFIRMED 不与 current 逐条比较，因此 `A→B→C` 时
-current=C、owned=C，不会误判；`A→B→A` 时 owned=A 与 before 相同，
-pendingRollback=false，合法。
-
-### 6.4 事务级恢复（两阶段）
-**Phase 1 只读**：对所有 target 执行 §6.2/§6.3 得到 plan：
-`{appends[], pendingRollbackSet, conflictSet}`；不写任何文件。
-**Phase 2 持锁执行**：
-- conflictSet 非空 → archiveConflict + CONFLICTED；
-- 否则先执行 appends（CANCELLED/CONFIRMED），再对 pendingRollbackSet 的
-  每个 target 生成 ROLLBACK op 执行写协议（expected=owned, next=before）；
-  全部达到 before → ROLLED_BACK → OUTCOME → tombstone。
-- Phase 2 中再冲突：已 CONFIRMED 的回滚进度留在 op 日志中，事务置
-  CONFLICTED；下一次 repair 按同一算法继续（幂等收敛），**不得报告成功**。
-
-多 tx 按 manifest.createdAt 升序逐个恢复；存在未清理 tx 时 host 拒绝新
-mutation。
+### 6.4 事务级恢复（两阶段，含 snapshot 预检）
+**Phase 0（纯读，零写入）**：
+- 对所有 `before.exists=true` 的 target 校验 snapshot 存在、hash/length
+  匹配、mode 合法；absent 不要求 snapshot。任一失败 → UNRECOVERABLE，
+  **在写任何 target 之前结束**。
+**Phase 1（纯读）**：§6.2/§6.3 生成 plan：
+`{appends[], pendingRollbackSet, conflictSet}`。
+**Phase 2（持锁执行）**：
+- 执行每个 append 前**重新读取 current** 并复核该判定；不一致则转为
+  CONFLICTED，不追加。
+- conflictSet 非空 → archiveConflict + CONFLICTED，零 target 写。
+- 否则执行 appends；再对 pendingRollbackSet 每 target 生成 ROLLBACK op
+  执行 §5.2（expected=owned, next=before）；全达 before → ROLLED_BACK →
+  OUTCOME → tombstone。
+- Phase 2 中新冲突：已 CONFIRMED 的回滚进度持久保留，置 CONFLICTED；下次
+  repair 继续收敛，**不得报告成功**。
+多 tx 按 manifest.createdAt 升序恢复；有未清理 tx 时 host 拒绝新 mutation。
 
 ### 6.5 COMMITTED 路径
-对每个 target：
-- 最后 op CONFIRMED 且 `current == 该 op.next` → OK；
-- 其他 → CONFLICTED（提交后被外部改），不回滚。
-全部 OK → OUTCOME=COMMITTED → tombstone。
+每 target：最后 op CONFIRMED 且 current==next → OK；否则 CONFLICTED（提交后
+被外部改），不回滚。全 OK → OUTCOME=COMMITTED → tombstone。
 
-## 7. Repair 与冲突处置
+## 7. Resolution 事务（独立 journal，S5b 实证）
 
-`cordis-mp repair --profile web [--tx txid] [--action restore-snapshot|accept-current] [--yes] [--force]`
+### 7.1 结构与 schema
+`resolutions/<rid>/manifest.json`：
+```json
+{ "v":1, "resolutionId":"r1", "txid":"tx1",
+  "action":"restore-snapshot",
+  "state":"PLANNED|RESOLVING|RESOLUTION_CONFLICTED",
+  "plan": { "<rel>": {
+      "expected": {"exists":true,"hash":"sha256:X"},
+      "next": {"exists":true,"hash":"sha256:A"} } } }
+```
+- plan immutable；`expected` = 计划时物理 current（对真正冲突也可表达，
+  因为它不再受普通链 `expected==前一 owned` 约束）；
+- `next` = 普通 journal 的 baseline before；
+- 每 target：`ops/<key>.json`（原子替换，只含一个 op）+
+  `confirmed/<key>` marker。
+- resolution 不复用普通 op 链，也不修改原 journal。
 
-### 7.1 冲突证据（archiveConflict）
-1. 复制 current 文件（或写 absent marker）到 evidence/（tmp+rename+fsync，
-   校验 hash）；
-2. 复制 manifest/ops/snapshots；
-3. 原子写 report.json；
-4. manifest.state=CONFLICTED。
-崩溃恢复：report.json 存在即权威，补全 evidence 后置 CONFLICTED。
-
-### 7.2 restore-snapshot（独立 RESOLUTION 事务）
-- 前置：所有 target 的 before snapshot 完整且 hash 可验证；任一 snapshot
-  缺失/损坏 → 该动作不可用，报告 UNRECOVERABLE_RESTORE。
-- 生成不可变 resolution plan：每 target `expected = 当前 current（计划时
-  快照）`、`next = before`、`kind=RESOLUTION`；要求用户显式确认。
-- 执行：对每 target 写 RESOLUTION op（§5.2 协议）。中断后续跑：OUTCOME 或
-  manifest 置 `RESOLVING`；再次 repair 时按 §6.1 优先级继续。
-- 终态：全部 target == before → OUTCOME=RESOLVED → tombstone；
-  任一 target 因新外部编辑冲突 → `RESOLUTION_CONFLICTED`，已恢复的 target
-  是持久化进度并如实展示，**绝不报告整体成功**。
-- 明确放弃“跨文件物理原子性”：多文件恢复允许持久化部分进度，但成功
-  声明以全量校验为准。
+### 7.2 执行与续跑
+1. 前置：全部 target 的 baseline snapshot 完整可验；否则
+   UNRECOVERABLE_RESTORE。
+2. persist manifest（fsync）→ state=PLANNED；用户已授权后写 RESOLVING。
+3. 对每 target：
+   - 无 op 文件 → 按 plan 原子写 op（expected/next）；
+   - 有 confirmed 且 current==next → DONE 跳过；
+   - 有 confirmed 但 current==expected → 删除 confirmed 后重做；
+   - 无 confirmed：current==expected → 执行替换并写 confirmed；
+     current==next → 补写 confirmed；其他 → 该 target CONFLICT。
+4. 全部 DONE → OUTCOME=RESOLVED → tombstone（原 journal 一并 tombstone）。
+5. 任一 target CONFLICT → OUTCOME=RESOLUTION_CONFLICTED；已完成 target 的
+   进度持久保留并如实报告，**绝不报告整体成功**。
+6. 恢复扫描：`resolutions/<rid>` 优先于普通 journal；OUTCOME=RESOLVED →
+   tombstone；OUTCOME=RESOLUTION_CONFLICTED → 停止等待重新授权；
+   无 OUTCOME → 按 3 继续。
 
 ### 7.3 accept-current
-1. 封存旧 journal 到 `conflicts/<txid>/accepted-<ts>/`（copy+fsync，不改旧件）；
-2. 调用 `BaselineValidatorPort.validateCurrentProfile()`（独立于
-   JournalPort）：manifest 可解析；`pnpm install --lockfile-only
-   --frozen-lockfile` 只读检查通过；patch/state 可解析；
-3. 通过 → OUTCOME=ACCEPTED_CURRENT → tombstone；失败 → 保持 CONFLICTED，
-   report 记 `resolution-failed`。
+1. 封存原 journal 到 `conflicts/<txid>/accepted-<ts>/`（copy+fsync，不改
+   原 journal）；
+2. `BaselineValidatorPort.validateCurrentProfile()` 只读校验；
+3. 通过 → 原 journal OUTCOME=ACCEPTED_CURRENT → tombstone；失败 → 保持
+   CONFLICTED，report 记 `resolution-failed`。
 
-## 8. 清理（tombstone）
+## 8. 冲突证据
 
-- 终态写 OUTCOME（原子写+fsync journal 目录）后：
-  1. `rename(journal/<txid>, trash/<txid>-<ts>)`；
-  2. fsync `journal/` 与 `trash/` 两个父目录；
-  3. 递归删除 trash。
-- 同文件系统 rename 是前提；跨设备不适用（journal 与 trash 同根，自然满足）。
-- 扫描时 trash 只删除；没有有效 OUTCOME/marker 的 journal 残骸不当作 trash。
+1. 复制 current（或 absent marker）到 evidence/（tmp+rename+fsync，校验
+   hash）；2. 复制 manifest/ops/snapshots；3. 原子写 report.json；
+4. manifest.state=CONFLICTED。
+恢复：report.json 存在即权威（§6.1 第 3 条），补全 evidence 副本。
 
-## 9. 跨进程锁与 fencing
+## 9. 跨进程锁（S5c 实证协议）
 
-`lock.json`：
-```json
-{ "owner":"host|repair", "bootId":"...", "pid":123, "processStartToken":"...",
-  "ownerToken":"...", "epoch":1, "acquiredAt":"...", "heartbeatAt":"..." }
-```
-- 获取：`open('wx', 0600)`；心跳 5s；stale 30s；更新原子替换+fsync。
-- **接管规则（v3）**：
-  - 必须先验证旧 pid 已死亡：POSIX 比较 `/proc/<pid>` 存在性与
-    `processStartToken`（进程启动时间）；其他平台用平台等效 API；
-  - 旧 pid 存活 → repair 拒绝执行写，host 永不接管；
-  - 旧 pid 死亡 → 允许替换 lock（新 token，epoch+1）；
-  - 无法判定死亡（无等效 API）→ 只读诊断，不接管；`--force` 仅在用户
-    明确确认“进程已手工终止”后允许，并记录 warning。
-- fencing 纵深防御：每次 journal 写与 target 写前读 lock 校验 ownerToken；
-  不匹配 → 中止。该检查与后续写非原子，但活进程接管已被禁止，协作进程
-  不会出现双 owner；TOCTOU 只影响非协作写入，归入 §1 best-effort。
+`lock.json`：`{owner,bootId,pid,processStartToken,ownerToken,epoch,
+acquiredAt,heartbeatAt}`。
+
+### 9.1 获取与心跳
+- 初始获取：`open('wx',0600)` 原子创建；失败则读现有 lock。
+- 心跳 5s；stale 30s；更新为原子替换+fsync。
+
+### 9.2 takeover CAS（死 owner）
+1. 读旧 lock；`pid 存活` 或 `heartbeat 未 stale` → 拒绝接管；
+2. CAS：`rename(lock, lock.stolen-<myToken>)`——同文件系统 rename 语义下
+   只有一个进程成功，其余 ENOENT；
+3. 赢家复核 stolen 内容与第 1 步读取的 ownerToken/processStartToken 一致；
+4. 复核 pid 已死且 heartbeat stale；否则把 stolen rename 回 lock 并放弃；
+5. `open(lock,'wx')` 写新 lock（新 token，epoch+1）。
+- S5c 实测：双 repair 并发抢 dead lock ×5，恰好 1 个赢家。
+- `--force` 仅在“pid 无法判定死亡”时允许，且明确降级为放弃 FULL 协作
+  保证并记录 warning；活 pid 一律禁止 force。
+- 平台无原子 rename CAS → 该平台为 BEST_EFFORT，诊断明示。
+
+### 9.3 fencing
+每次 journal/target 写前校验 lock ownerToken 等于当前持有者；不匹配 →
+只读退出（若已失去写权，不尝试置 CONFLICTED）。活进程被禁止接管，故协作
+双 owner 不会出现；TOCTOU 仅归入非协作 best-effort。
 
 ## 10. 接口
 
@@ -219,77 +233,55 @@ interface JournalPort {
   writePresent(tx: TxId, rel: string, data: Uint8Array): Promise<void> // hash 由实现计算
   delete(tx: TxId, rel: string): Promise<void>
   commitFiles(tx: TxId): Promise<void>
-  rollback(tx: TxId): Promise<void>            // 自动回滚（§6.4）
-  scan(): Promise<RecoveryReport>              // 只读
-  recover(): Promise<RecoveryReport>           // 自动 RECOVERABLE
+  rollback(tx: TxId): Promise<void>
+  scan(): Promise<RecoveryReport>
+  recover(): Promise<RecoveryReport>
   archiveConflict(tx: TxId): Promise<void>
-  beginResolution(tx: TxId, plan: ResolutionPlan): Promise<void>
-  resolveTarget(tx: TxId, rel: string): Promise<void> // 执行计划中该 target 的 RESOLUTION op
-  completeResolution(tx: TxId): Promise<Report>
+  // resolution
+  beginResolution(tx: TxId, action: 'restore-snapshot'|'accept-current',
+                  plan?: ResolutionPlan): Promise<ResolutionId>
+  resolveTarget(rid: ResolutionId, rel: string): Promise<void>
+  completeResolution(rid: ResolutionId): Promise<ResolutionOutcome>
+  acceptCurrent(tx: TxId, baseline: BaselineReport): Promise<void>
 }
 ```
-- `writePresent` 只接受 bytes；hash/next 由 JournalPort 计算，杜绝
-  `exists:true 无 data`、hash 不一致等非法输入。
-- `commitFiles` 前置：所有声明 target 最后 op CONFIRMED；否则返回
-  JOURNALLED 错误。
-- JournalPort 不编排业务校验。
+- `writePresent` 只接受 bytes；`commitFiles` 拒绝 pending INTENDED 或未声明
+  target；所有非法状态迁移返回 JOURNALLED。
+- `completeResolution` 根据 durable plan.action 写 RESOLVED 或
+  ACCEPTED_CURRENT，不依赖调用方重复声明。
 
 ### 10.2 RepairService（install-core）
-编排 `JournalPort + BaselineValidatorPort`：
-- 读 scan → 分类；
-- RECOVERABLE → recover；
-- restore-snapshot → 验证 snapshot → 生成 plan → beginResolution /
-  resolveTarget / completeResolution；
-- accept-current → archive + BaselineValidatorPort + completeResolution。
-- BaselineValidatorPort 只读：`validateCurrentProfile(): Promise<BaselineReport>`。
+编排 JournalPort + BaselineValidatorPort：
+- scan → RECOVERABLE 自动 recover；
+- restore-snapshot → 验证 baseline snapshot → beginResolution(plan) →
+  resolveTarget × N → completeResolution；
+- accept-current → archive + BaselineValidatorPort → acceptCurrent。
+BaselineValidatorPort 只读。
 
 ## 11. 测试矩阵（自包含）
 
-A. 逻辑归约：
-1. before=A；`A→B CONFIRMED`、`B→C CONFIRMED`，current=C → owned=C 不冲突。
-2. `A→B→A`，current=A → owned=A，pendingRollback=false。
-3. 回滚 `B→A INTENDED` 崩溃，current=B → 计划 CONFIRMED 后继续回滚。
-4. 回滚 INTENDED 被 CANCELLED → owned 仍为 B，继续生成新回滚 op。
-5. malformed chain（expected≠前一 owned、seq 跳变、重复 CONFIRMED、
-   before≠baseline、双 pending）→ UNRECOVERABLE。
-
-B. 物理写入：
-6. present→present / absent→present / present→absent 在每步崩溃；
-   absent→absent 拒绝。
-7. mode 保留与恢复校验；snapshot hash 校验。
-8. 非协作写入注入在检查→rename、终检→marker 窗口 → 预期 CONFLICTED
-   （可检测）或文档化不可检测窗口。
-
-C. 提交与清理：
-9. COMMITTED marker 前/后崩溃；manifest=FILE_COMMITTED 但无 marker → 回滚。
-10. OUTCOME 已写未 tombstone；tombstone rename 前/后崩溃；trash 残骸只删除。
-11. 无 manifest：空目录 → NOOP；有 ops/snapshots → UNRECOVERABLE。
-
-D. 冲突与 repair：
-12. evidence 复制/report/state 三步各自崩溃。
-13. restore-snapshot：resolution 计划后每 target 写前/写后崩溃、二次崩溃、
-    中途新外部编辑 → RESOLUTION_CONFLICTED，进度可见，绝不报成功。
-14. snapshot 缺失/损坏 → UNRECOVERABLE_RESTORE。
-15. accept-current 校验失败 → 保持 CONFLICTED，不 UNRECOVERABLE。
-
-E. 锁：
-16. 活 pid 拒绝接管；死 pid 接管后旧 owner token 失效；
-    force 路径记录 warning；接管竞态测试。
-17. 多 tx 恢复顺序与 host 新 mutation 拒绝。
-
-F. 契约：
-18. JournalPort 非法输入与非法调用顺序（writePresent data 缺、commitFiles
-    有 pending、未 begin 等）返回 JOURNALLED。
-19. 全矩阵同时用 kill -9 与确定性 failpoint model test 双轨运行。
-20. 不变量：恢复成功返回终态后，无 marker 不保留 owned 写；有 marker 永不
-    自动回滚。
+A. 普通归约：A→B→C、A→B→A、回滚 B→A INTENDED 崩溃、CANCELLED 后继续
+   回滚、malformed chain 全量。
+B. 写入：present/absent 全组合每步崩溃；mode 恢复；snapshot 缺失在 Phase 0
+   拒绝；非协作写入注入两个已知窗口。
+C. 提交/清理：marker 前后崩溃；manifest=FILE_COMMITTED 无 marker → 回滚；
+   OUTCOME 有效值/缺失/损坏分支；tombstone 双目录 fsync 与崩溃。
+D. resolution（S5b 实测场景）：
+   - plan 后无 op / op 后未写 / 写后未 confirmed / confirmed 后崩溃；
+   - 部分 DONE 后整体 RESOLUTION_CONFLICTED，进度可见且不报成功；
+   - OUTCOME=RESOLVED 后 tombstone 前崩溃 → 只清理；
+   - plan 后外部再改 → 该 target CONFLICT，其他 target 继续。
+E. 锁（S5c 实测场景）：
+   - 活 owner 拒绝；dead+stale 接管；双 repair 竞争恰好 1 赢家；
+   - 新 owner 崩溃且 heartbeat 未 stale → 拒绝二次接管；
+   - token 不匹配只读退出；force 降级记录 warning。
+F. JournalPort 非法输入/调用顺序；RepairService action 与 durable plan 一致。
+G. 不变量模型测试：单协作 owner；冲突后未经授权不修改 target；
+   RESOLVED 当且仅当全 target durable == before；恢复成功返回终态后无
+   marker 不保留 owned 写、有 marker 永不自动回滚。
 
 ## 12. 明确不在本规格范围
 - 插件激活 / PENDING_ACTIVATION（ACTIVATION-SPEC）。
 - inspectArtifact / tarball（ARTIFACT-SPEC）。
 - pnpm/dsh CLI 细节（PackageManagerPort）。
 - 备份、WebDAV、Gist。
-
-## 13. 与 PLAN-v4 状态命名映射
-PLAN-v4 的 `DIRTY` = `CONFLICTED | RESOLUTION_CONFLICTED | UNRECOVERABLE`。
-实现与验收只使用本规格状态名。
