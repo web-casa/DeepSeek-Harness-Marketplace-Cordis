@@ -1,0 +1,1 @@
+{"v":1,"txid":"tx1","state":"CONFLICTED","baseline":{"package.json":{"exists":true,"hash":"aa508c2187fca56f397ff75adc52b94e02f38122cdd48bd42105106e5e0f8e14"},"pnpm-lock.yaml":{"exists":true,"hash":"05816a1560db947d6ff798e30909816f400f14230e9a06afac8f8b213127aa21"}}}

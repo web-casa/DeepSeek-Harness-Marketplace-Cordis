@@ -1,0 +1,18 @@
+node:fs:441
+    return binding.readFileUtf8(path, stringToFlags(options.flag));
+                   ^
+
+Error: ENOENT: no such file or directory, open '/home/ivmm/daohang/toolso-ai-open/cordis-mp/spikes/S5b/case-after-first-write/resolutions/r1/ops-32824c984905bb02bc7ffcef96a77addd1f1602cff71a11fbbfdd7f53ee026bb.json'
+    at readFileSync (node:fs:441:20)
+    at recover (file:///home/ivmm/daohang/toolso-ai-open/cordis-mp/spikes/S5b/resolution.mjs:74:27)
+    at file:///home/ivmm/daohang/toolso-ai-open/cordis-mp/spikes/S5b/resolution.mjs:96:28
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/home/ivmm/daohang/toolso-ai-open/cordis-mp/spikes/S5b/case-after-first-write/resolutions/r1/ops-32824c984905bb02bc7ffcef96a77addd1f1602cff71a11fbbfdd7f53ee026bb.json'
+}
+
+Node.js v24.18.0
