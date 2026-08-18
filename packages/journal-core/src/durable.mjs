@@ -29,6 +29,7 @@ export function atomicFile(path, content, { mode = 0o600, exclusive = false } = 
   }
   failpoint('atomicFile:before-dirfsync', { path, exclusive })
   fsyncDir(dirname(path))
+  failpoint('atomicFile:after-dirfsync', { path, exclusive })
 }
 export function appendRecord(path, line) {
   failpoint('appendRecord:before', { path })
@@ -40,6 +41,7 @@ export function appendRecord(path, line) {
   const fd2 = openSync(path, 'r'); try { fsyncSync(fd2) } finally { closeSync(fd2) }
   failpoint('appendRecord:before-dirfsync', { path })
   fsyncDir(dirname(path))
+  failpoint('appendRecord:after-dirfsync', { path })
 }
 export function marker(path) { failpoint('marker:before', { path }); atomicFile(path, '', { exclusive: true }); failpoint('marker:after', { path }) }
 export function replaceTarget(path, data, mode = 0o600) {
@@ -55,6 +57,7 @@ export function replaceTarget(path, data, mode = 0o600) {
   renameSync(tmp, path)
   failpoint('replaceTarget:after-rename', { path })
   fsyncDir(dirname(path))
+  failpoint('replaceTarget:after-dirfsync', { path })
 }
 export function unlinkTargetDurable(path) {
   failpoint('unlinkTarget:before', { path })
@@ -62,6 +65,7 @@ export function unlinkTargetDurable(path) {
   unlinkSync(path)
   failpoint('unlinkTarget:after-unlink', { path })
   fsyncDir(dirname(path))
+  failpoint('unlinkTarget:after-dirfsync', { path })
 }
 export function readJsonIfExists(path) {
   try { return JSON.parse(readFileSync(path, 'utf8')) } catch (e) { if (e.code === 'ENOENT') return null; throw e }
@@ -81,4 +85,5 @@ export function tombstone(kind, dir) {
   fsyncDir(dirname(dir))
   failpoint('tombstone:after-src-fsync', { kind, dir, target })
   fsyncDir(trashRoot)
+  failpoint('tombstone:after-dirfsync', { kind, dir, target })
 }

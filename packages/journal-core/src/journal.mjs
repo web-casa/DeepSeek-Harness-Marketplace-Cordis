@@ -49,7 +49,7 @@ export class Journal {
     const v=this.#validatedTarget(tx,rel)
     if(v.pending) throw new JournalError('PENDING','previous op is pending INTENDED')
     const seq=v.records.length ? v.records[v.records.length-1].seq + 1 : 1
-    const op={v:1,txid:tx,targetKey:targetKey(rel),opId:`${tx}-${seq}`,seq,kind,phase:'INTENDED',expected,next,before:m.targets[rel].state}
+    const op={v:1,txid:tx,targetKey:targetKey(rel),opId:`${tx}-${seq}`,seq,kind,phase:'INTENDED',expected,next,before:expected}
     if(next.exists){ op.mode=mode; op.length=length }
     appendRecord(this.#opsPath(tx,rel), JSON.stringify(op))
     return op
@@ -81,7 +81,7 @@ export class Journal {
     this.#appendPhase(tx,rel,op,'CONFIRMED')
   }
 
-  #lastMode(tx,rel){ const ops=this.#readOps(tx,rel); for(let i=ops.length-1;i>=0;i--){ if(ops[i].mode) return ops[i].mode } return null }
+  #lastMode(tx,rel){ const ops=this.#parseTarget(tx,rel).records; for(let i=ops.length-1;i>=0;i--){ if(ops[i].mode) return ops[i].mode } return null }
 
   async commitFiles(tx){
     this.lock?.fence()
@@ -104,8 +104,11 @@ export class Journal {
 
   scan(){ const out={txs:[]}; if(!existsSync(this.txDir)) return out
     for(const tx of readdirSync(this.txDir)){ const d=join(this.txDir,tx); if(!statSync(d).isDirectory()) continue
-      const m=readJsonIfExists(join(d,'manifest.json')); const committed=existsSync(join(d,'COMMITTED')); const outcome=readJsonIfExists(join(d,'OUTCOME.json'))
-      out.txs.push({txid:tx, manifest:m, committed, outcome}) }
+      const m=readJsonIfExists(join(d,'manifest.json')); const committed=existsSync(join(d,'COMMITTED'))
+      let outcome=null, outcomeInvalid=false
+      const op=join(d,'OUTCOME.json')
+      if(existsSync(op)){ try{ outcome=JSON.parse(readFileSync(op,'utf8')) }catch{ outcomeInvalid=true } }
+      out.txs.push({txid:tx, manifest:m, committed, outcome, outcomeInvalid}) }
     return out }
 
   #verifySnapshots(tx){
@@ -138,17 +141,17 @@ export class Journal {
       if(bad) continue
       pre.push({t, committed:false, m, classified, conflicts})
     }
-    for(const p of pre){
+    outer: for(const p of pre){
       if(p.committed){
         const m=this.#loadManifest(p.t.txid); const bad=[]
         for(const rel of Object.keys(m.targets)){
-          let v; try{ v=this.#validatedTarget(p.t.txid,rel) }catch(e){ report.push({txid:p.t.txid,result:e.code}); return report }
+          let v; try{ v=this.#validatedTarget(p.t.txid,rel) }catch(e){ report.push({txid:p.t.txid,result:e.code}); continue outer }
           const cur=fileState(this.#profilePath(rel))
           if(v.pending || cur.hash!==v.owned.hash || cur.exists!==v.owned.exists) bad.push(rel)
         }
         if(bad.length){ await this.archiveConflict(p.t.txid,bad.map(rel=>({rel,state:fileState(this.#profilePath(rel))}))); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue }
-        if(p.t.outcome && p.t.outcome.outcome!=='COMMITTED'){ report.push({txid:p.t.txid,result:'BAD_OUTCOME'}); continue }
-        if(!p.t.outcome?.outcome) atomicFile(join(this.#txDir(p.t.txid),'OUTCOME.json'), JSON.stringify({v:1,txid:p.t.txid,outcome:'COMMITTED'}),{mode:0o600})
+        if(p.t.outcomeInvalid || (p.t.outcome && (p.t.outcome.v!==1 || p.t.outcome.txid!==p.t.txid || p.t.outcome.outcome!=='COMMITTED'))){ report.push({txid:p.t.txid,result:'BAD_OUTCOME'}); continue }
+        if(!p.t.outcome) atomicFile(join(this.#txDir(p.t.txid),'OUTCOME.json'), JSON.stringify({v:1,txid:p.t.txid,outcome:'COMMITTED'}),{mode:0o600})
         tombstone('journal', this.#txDir(p.t.txid))
         report.push({txid:p.t.txid,result:'COMMITTED_OK'})
         continue
@@ -156,9 +159,9 @@ export class Journal {
       if(p.conflicts.length){ await this.archiveConflict(p.t.txid, p.conflicts); report.push({txid:p.t.txid,result:'CONFLICTED',conflicts:p.conflicts}); continue }
       // Phase 2：每个 planned append 前复核 current
       for(const [rel,r] of Object.entries(p.classified)){
-        if(r.pendingAction==='CANCELLED'){ const cur=fileState(this.#profilePath(rel)); if(cur.hash!==r.pending.expected.hash||cur.exists!==r.pending.expected.exists){ await this.archiveConflict(p.t.txid,[{rel,state:cur}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); return report }
+        if(r.pendingAction==='CANCELLED'){ const cur=fileState(this.#profilePath(rel)); if(cur.hash!==r.pending.expected.hash||cur.exists!==r.pending.expected.exists){ await this.archiveConflict(p.t.txid,[{rel,state:cur}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue outer }
           this.#appendPhase(p.t.txid,rel,r.pending,'CANCELLED') }
-        if(r.pendingAction==='CONFIRMED'){ const cur=fileState(this.#profilePath(rel)); if(cur.hash!==r.pending.next.hash||cur.exists!==r.pending.next.exists){ await this.archiveConflict(p.t.txid,[{rel,state:cur}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); return report }
+        if(r.pendingAction==='CONFIRMED'){ const cur=fileState(this.#profilePath(rel)); if(cur.hash!==r.pending.next.hash||cur.exists!==r.pending.next.exists){ await this.archiveConflict(p.t.txid,[{rel,state:cur}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue outer }
           this.#appendPhase(p.t.txid,rel,r.pending,'CONFIRMED') }
       }
       const rollback=[]
@@ -168,13 +171,13 @@ export class Journal {
       }
       for(const rel of rollback){
         try{ await this.#rollbackTarget(p.t.txid,rel,p.m) }
-        catch(e){ if(e.code==='FP_INJECTED') throw e; await this.archiveConflict(p.t.txid,[{rel,state:fileState(this.#profilePath(rel))}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); return report }
+        catch(e){ if(e.code==='FP_INJECTED') throw e; await this.archiveConflict(p.t.txid,[{rel,state:fileState(this.#profilePath(rel))}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue outer }
       }
       // 最终复核：所有 target 必须等于 baseline 才允许宣告 ROLLED_BACK
       for(const rel of Object.keys(p.m.targets)){
         const cur=fileState(this.#profilePath(rel)); const b=p.m.targets[rel].state
         if(cur.exists!==b.exists || cur.hash!==b.hash){
-          await this.archiveConflict(p.t.txid,[{rel,state:cur}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); return report
+          await this.archiveConflict(p.t.txid,[{rel,state:cur}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue outer
         }
       }
       atomicFile(join(this.#txDir(p.t.txid),'OUTCOME.json'), JSON.stringify({v:1,txid:p.t.txid,outcome:'ROLLED_BACK'}),{mode:0o600})

@@ -14,6 +14,12 @@ function sameState(a, b) { return a && b && a.exists === b.exists && a.hash === 
 
 function validateCommon(op, { txid, rel }) {
   if (op.v !== 1) throw { code: 'BAD_OP', message: 'op v != 1' }
+  if (op.next.exists) {
+    if (typeof op.length !== 'number' || !Number.isInteger(op.length) || op.length < 0) throw { code: 'BAD_OP', message: 'bad length for present next' }
+    if (typeof op.mode !== 'string' || !/^0?[0-7]{3}$/.test(op.mode)) throw { code: 'BAD_OP', message: 'bad mode' }
+  } else if (op.length !== undefined || op.mode !== undefined) {
+    throw { code: 'BAD_OP', message: 'length/mode must be absent for absent next' }
+  }
   if (op.txid !== txid) throw { code: 'BAD_OP', message: 'op txid mismatch' }
   if (op.targetKey !== targetKey(rel)) throw { code: 'BAD_OP', message: 'op targetKey mismatch' }
   if (!PHASES.includes(op.phase)) throw { code: 'BAD_OP', message: 'bad phase' }
@@ -68,11 +74,12 @@ export function parseOpLog(lines, { txid, rel }) {
 export function reduceOps(parsed, baseline) {
   const { groups } = parsed
   let owned = baseline.state
-  groups.forEach((group, idx) => {
+  groups.forEach((group) => {
     const op = group[0]
-    if (!sameState(op.before, baseline.state)) throw { code: 'BAD_OP', message: 'op before != baseline' }
-    if (op.kind === 'ROLLBACK' && !sameState(op.next, baseline.state)) throw { code: 'BAD_OP', message: 'rollback next != baseline' }
+    // working draft v7.1：before 表示 op 开始前 owned，且必须等于 expected
+    if (!sameState(op.before, owned)) throw { code: 'BAD_OP', message: 'op before != previous owned' }
     if (!sameState(op.expected, owned)) throw { code: 'BAD_OP', message: 'expected chain mismatch' }
+    if (op.kind === 'ROLLBACK' && !sameState(op.next, baseline.state)) throw { code: 'BAD_OP', message: 'rollback next != baseline' }
     const final = group[group.length - 1]
     if (final.phase === 'CONFIRMED') owned = final.next
   })

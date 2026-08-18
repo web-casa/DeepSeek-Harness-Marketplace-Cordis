@@ -8,15 +8,17 @@ const st = (x) => ({ exists: true, hash: x })
 const absent = { exists: false, hash: null }
 const baseline = { state: st(H.A) }
 function rec({seq, phase, kind='FORWARD', expected=st(H.A), next=st(H.B), before=st(H.A)}){
-  return {v:1,txid:'tx1',targetKey:targetKey('pkg'),opId:`tx1-${seq}`,seq,kind,phase,expected,next,before}
+  const op={v:1,txid:'tx1',targetKey:targetKey('pkg'),opId:`tx1-${seq}`,seq,kind,phase,expected,next,before}
+  if(next.exists){ op.mode='0644'; op.length=1 }
+  return op
 }
 
 test('A->B->C chain reduces to owned C', ()=>{
   const lines=[
     JSON.stringify(rec({seq:1,phase:'INTENDED',next:st(H.B)})),
     JSON.stringify(rec({seq:1,phase:'CONFIRMED',next:st(H.B)})),
-    JSON.stringify(rec({seq:2,phase:'INTENDED',expected:st(H.B),next:st(H.C)})),
-    JSON.stringify(rec({seq:2,phase:'CONFIRMED',expected:st(H.B),next:st(H.C)})),
+    JSON.stringify(rec({seq:2,phase:'INTENDED',expected:st(H.B),before:st(H.B),next:st(H.C)})),
+    JSON.stringify(rec({seq:2,phase:'CONFIRMED',expected:st(H.B),before:st(H.B),next:st(H.C)})),
   ]
   const parsed=parseOpLog(lines,{txid:'tx1',rel:'pkg'})
   const r=reduceOps(parsed,baseline)
@@ -70,7 +72,7 @@ test('rollback next must equal baseline', ()=>{
   const lines=[
     JSON.stringify(rec({seq:1,phase:'INTENDED',next:st(H.B)})),
     JSON.stringify(rec({seq:1,phase:'CONFIRMED',next:st(H.B)})),
-    JSON.stringify(rec({seq:2,phase:'INTENDED',kind:'ROLLBACK',expected:st(H.B),next:st(H.C)})),
+    JSON.stringify(rec({seq:2,phase:'INTENDED',kind:'ROLLBACK',expected:st(H.B),before:st(H.B),next:st(H.C)})),
   ]
   assert.throws(()=>reduceOps(parseOpLog(lines,{txid:'tx1',rel:'pkg'}),baseline), e=>e.code==='BAD_OP')
 })

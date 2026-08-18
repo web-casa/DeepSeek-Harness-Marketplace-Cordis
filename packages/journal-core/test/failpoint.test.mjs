@@ -1,4 +1,4 @@
-import { test } from 'node:test'
+import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -7,6 +7,8 @@ import { createHash } from 'node:crypto'
 import { Journal } from '../src/journal.mjs'
 import { setFailpoint, clearFailpoints } from '../src/failpoints.mjs'
 import { sha256 } from '../src/state.mjs'
+
+afterEach(()=>clearFailpoints())
 
 function setup(){
   const base=mkdtempSync(join(tmpdir(),'fp-'))
@@ -63,4 +65,20 @@ test('failpoint before rollback append leaves target untouched and throws', asyn
   await assert.rejects(()=>c.j.recover(), /fp-append/)
   assert.equal(readFileSync(join(c.profile,'package.json'),'utf8'),'A1')
   clearFailpoints()
+})
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+
+test('child crash after COMMITTED publish before dirfsync: recovery keeps commit', async ()=>{
+  const base=mkdtempSync(join(tmpdir(),'kill-'))
+  const profile=join(base,'profile'); const root=join(base,'meta'); mkdirSync(profile,{recursive:true}); writeFileSync(join(profile,'package.json'),'A0')
+  const helper=fileURLToPath(new URL('./kill-helper.mjs', import.meta.url))
+  await new Promise(resolve=>{
+    const c=spawn(process.execPath,[helper,'marker-publish-crash',profile,root],{stdio:['ignore','pipe','pipe']})
+    c.on('close',code=>{ assert.equal(code,42); resolve() })
+  })
+  const j=new Journal({journalRoot:root,profileRoot:profile})
+  const report=await j.recover()
+  assert.equal(report[0].result,'COMMITTED_OK')
+  assert.equal(readFileSync(join(profile,'package.json'),'utf8'),'A1')
 })

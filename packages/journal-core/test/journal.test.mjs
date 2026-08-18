@@ -1,4 +1,4 @@
-import { test, beforeEach } from 'node:test'
+import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { Journal, JournalError, FileLock, LockBusy, sha256 } from '../src/index.js'
 import { setFailpoint, clearFailpoints } from '../src/failpoints.mjs'
+
+afterEach(()=>clearFailpoints())
 
 function make(){
   const base=mkdtempSync(join(tmpdir(),'jm-'))
