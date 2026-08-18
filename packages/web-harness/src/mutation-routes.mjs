@@ -20,11 +20,15 @@ export function readJsonBody(req, limit = 64 * 1024) {
   })
 }
 
-export function createMutationHandler({ installService, platform = 'web' }) {
+export function createMutationHandler({ installService, platform = 'web', guard = null }) {
   return async (req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1')
     if (url.pathname === '/cordis-mp/status' && req.method === 'GET') return json(res, 200, { ok: true, busy: false })
     if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return }
+    if (guard) {
+      const check = guard.guard(req)
+      if (!check.ok) return json(res, check.status, { error: { code: check.reason, message: 'untrusted mutation request' } })
+    }
     try {
       if (url.pathname === '/cordis-mp/install') {
         const body = await readJsonBody(req)

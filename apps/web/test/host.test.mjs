@@ -20,5 +20,6 @@ test('host injects webServer and mounts catalog + mutation routes', async () => 
     ['exact', '/cordis-mp/install'],
     ['exact', '/cordis-mp/uninstall'],
     ['exact', '/cordis-mp/status'],
+    ['exact', '/cordis-mp/session'],
   ])
 })

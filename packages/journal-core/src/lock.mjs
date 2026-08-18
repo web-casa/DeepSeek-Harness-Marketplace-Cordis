@@ -34,6 +34,16 @@ export class FileLock {
   constructor(root){ this.root=root; this.dir=join(root,'lock'); this.ownerPath=join(this.dir,'owner.json'); this.hbPath=join(this.dir,'heartbeat.json'); this.record=null }
 
   #readOwner(path){ try { return JSON.parse(readFileSync(path,'utf8')) } catch { return null } }
+  #stolenState(){
+    const names = readdirSync(this.root).filter(n => n.startsWith('lock.stolen-'))
+    if (names.length === 0) return null
+    let newest = null
+    for (const name of names) {
+      const p = join(this.root, name)
+      try { const st = statSync(p); if (!newest || st.mtimeMs > newest.mtimeMs) newest = { name, path: p, mtimeMs: st.mtimeMs, owner: this.#readOwner(join(p, 'owner.json')) } } catch {}
+    }
+    return newest
+  }
 
   acquire(scope='mutation', { wait=false } = {}){
     mkdirSync(this.root,{recursive:true,mode:0o700})
@@ -41,8 +51,25 @@ export class FileLock {
       pid:process.pid,processStartToken:PROCESS_TOKEN,
       ownerToken:randomBytes(16).toString('hex'),epoch:1,acquiredAt:Date.now(),heartbeatAt:Date.now(),processStartTicks:processStartTicks(process.pid) ?? undefined}
     for(;;){
+      const stolen = this.#stolenState()
+      if (stolen) {
+        const age = Date.now() - stolen.mtimeMs
+        if (age < 5000) {
+          if (!existsSync(this.dir)) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20); continue }
+          // 新锁已建立：继续走下方 mkdir(EEXIST)->BUSY 路径，不必等待 stolen 老化
+        }
+        // 上一个 takeover 在 rename 后崩溃：读取 stolen owner 继承 epoch
+        if (!existsSync(this.dir) && stolen.owner && !ownerAlive(stolen.owner) && stale(stolen.owner)) {
+          rec.epoch = (stolen.owner.epoch ?? 0) + 1
+        }
+      }
       try {
         mkdirSync(this.dir,{mode:0o700})
+        // 关闭 rename→mkdir 间隙：若此刻存在刚产生的 stolen 旧锁，继承其 epoch。
+        const gapStolen = this.#stolenState()
+        if (gapStolen?.owner && !ownerAlive(gapStolen.owner) && stale(gapStolen.owner)) {
+          rec.epoch = (gapStolen.owner.epoch ?? 0) + 1
+        }
         try {
           atomicFile(this.ownerPath, JSON.stringify(rec), {mode:0o600})
           atomicFile(this.hbPath, JSON.stringify({heartbeatAt:rec.heartbeatAt}), {mode:0o600})
