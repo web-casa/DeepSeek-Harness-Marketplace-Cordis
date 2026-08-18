@@ -1,0 +1,13 @@
+{
+  "name": "@cordis-mp/journal-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./repair": "./bin/repair.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/"
+  }
+}

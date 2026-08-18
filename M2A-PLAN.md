@@ -12,4 +12,7 @@
 - S6 freeze：全部 gate 绿 → spec v1.0-final → 暴露 JournalPort/LockPort
 
 ## 当前状态
-- S1/S2 进行中，其余 TODO。
+- S1 完成：骨架 + durable primitives + 基础 lock
+- S2 完成：普通事务 begin/writePresent/delete/commitFiles/recover + 10 tests
+- S4 部分完成：exclusive acquire / takeover CAS / heartbeat+fencing + 5 tests
+- S3/S5/S6 TODO
