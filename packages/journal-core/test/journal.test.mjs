@@ -153,3 +153,39 @@ test('existing conflict report blocks automatic recovery', async ()=>{
   assert.equal(report[0].result,'CONFLICTED_EXISTING')
   assert.equal(readFileSync(join(profile,'package.json'),'utf8'),before)
 })
+
+test('begin refuses while an active tx exists', async ()=>{
+  const {j}=make()
+  await j.begin(['package.json'])
+  await assert.rejects(()=>j.begin(['pnpm-lock.yaml']), e=>e.code==='ACTIVE_TX')
+})
+
+test('invalid manifest is reported as BAD_MANIFEST', async ()=>{
+  const {j,journalRoot}=make()
+  mkdirSync(join(journalRoot,'journal','tx9'),{recursive:true})
+  writeFileSync(join(journalRoot,'journal','tx9','manifest.json'),'{bad json')
+  const report=await j.recover()
+  assert.equal(report[0].result,'BAD_MANIFEST')
+})
+
+test('committed path rejects bad outcome schema', async ()=>{
+  const {j,journalRoot,profile}=make()
+  const tx=await j.begin(['package.json'])
+  await j.writePresent(tx,'package.json',Buffer.from('A1'))
+  await j.commitFiles(tx)
+  writeFileSync(join(journalRoot,'journal',tx,'OUTCOME.json'),JSON.stringify({outcome:'ROLLED_BACK',v:0,txid:'other'}))
+  const report=await j.recover()
+  assert.equal(report[0].result,'BAD_OUTCOME')
+  assert.equal(readFileSync(join(profile,'package.json'),'utf8'),'A1')
+})
+
+test('conflict report with missing evidence is not silently trusted', async ()=>{
+  const {j,profile}=make()
+  const tx=await j.begin(['package.json'])
+  await j.writePresent(tx,'package.json',Buffer.from('A1'))
+  writeFileSync(join(profile,'package.json'),'X')
+  await j.recover() // creates evidence + report
+  rmSync(join(j.root,'conflicts',tx,'evidence'),{recursive:true,force:true})
+  const report=await j.recover()
+  assert.equal(report[0].result,'BAD_EVIDENCE')
+})

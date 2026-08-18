@@ -16,6 +16,9 @@ export class Journal {
   #profilePath(rel){ return join(this.profile, rel) }
 
   async begin(targets) {
+    this.lock?.fence()
+    const active = this.scan().txs.filter(t => t.manifest && !t.committed && !(t.outcome && t.outcome.outcome==='ROLLED_BACK'))
+    if (active.length > 0) throw new JournalError('ACTIVE_TX', 'an active journal transaction already exists: ' + active.map(t=>t.txid).join(','))
     const txid = randomBytes(6).toString('hex')
     const manifest = { v:1, txid, state:'PREPARING', createdAt: Date.now(), targets:{} }
     const dir = this.#txDir(txid); mkdirSync(dir, {recursive:true, mode:0o700})
@@ -33,11 +36,6 @@ export class Journal {
 
   #loadManifest(tx){ const m = readJsonIfExists(join(this.#txDir(tx),'manifest.json')); if(!m) throw new JournalError('NO_MANIFEST','no manifest'); return m }
   #opsPath(tx,rel){ return join(this.#txDir(tx),'ops',targetKey(rel)+'.jsonl') }
-  #readOps(tx,rel){
-    const p=this.#opsPath(tx,rel); if(!existsSync(p)) return []
-    const lines=readFileSync(p,'utf8').split('\n')
-    try { return parseOpLog(lines, { txid:tx, rel }).records } catch(e) { throw new JournalError(e.code ?? 'BAD_OP', e.message) }
-  }
   #parseTarget(tx,rel){ const p=this.#opsPath(tx,rel); const lines=existsSync(p)?readFileSync(p,'utf8').split('\n'):[]
     try { return parseOpLog(lines, { txid:tx, rel }) } catch(e) { throw new JournalError(e.code ?? 'BAD_OP', e.message) } }
   #validatedTarget(tx,rel){ const parsed=this.#parseTarget(tx,rel); const baseline=this.#loadManifest(tx).targets[rel]
@@ -94,21 +92,41 @@ export class Journal {
     }
     this.lock?.fence(); marker(join(this.#txDir(tx),'COMMITTED'))
     m.state='FILE_COMMITTED'; atomicFile(join(this.#txDir(tx),'manifest.json'), JSON.stringify(m,null,2),{mode:0o600})
-    atomicFile(join(this.#txDir(tx),'OUTCOME.json'), JSON.stringify({v:1,txid:tx,outcome:'COMMITTED'}),{mode:0o600})
+    this.lock?.fence(); atomicFile(join(this.#txDir(tx),'OUTCOME.json'), JSON.stringify({v:1,txid:tx,outcome:'COMMITTED'}),{mode:0o600})
   }
 
   getBaseline(tx){ return this.#loadManifest(tx).targets }
   readSnapshot(tx, rel){ const b=this.getBaseline(tx)[rel]; if(!b) return null; if(!b.state.exists) return null; return readFileSync(join(this.#txDir(tx),'snapshots',targetKey(rel)+'.bin')) }
   txExists(tx){ return existsSync(join(this.#txDir(tx),'manifest.json')) }
-  hasConflict(tx){ return existsSync(join(this.root,'conflicts',tx,'report.json')) }
+  hasConflict(tx){ return this.#conflictStatus(tx) === 'conflicted' }
+  #conflictStatus(tx){
+    const reportPath=join(this.root,'conflicts',tx,'report.json')
+    if(!existsSync(reportPath)) return 'none'
+    let report
+    try { report=JSON.parse(readFileSync(reportPath,'utf8')) } catch { return 'bad-report' }
+    if(!report || report.v!==1 || report.txid!==tx || !Array.isArray(report.conflicts)) return 'bad-report'
+    const ev=join(this.root,'conflicts',tx,'evidence')
+    for(const c of report.conflicts){
+      if(!c || typeof c.rel!=='string' || !c.state) return 'bad-report'
+      const f=join(ev,targetKey(c.rel)+'.bin')
+      const a=join(ev,targetKey(c.rel)+'.absent.json')
+      if(c.state.exists){
+        if(!existsSync(f)) return 'bad-evidence'
+        try { if(sha256(readFileSync(f))!==c.state.hash) return 'bad-evidence' } catch { return 'bad-evidence' }
+      } else if(!existsSync(a)) return 'bad-evidence'
+    }
+    return 'conflicted'
+  }
 
   scan(){ const out={txs:[]}; if(!existsSync(this.txDir)) return out
     for(const tx of readdirSync(this.txDir)){ const d=join(this.txDir,tx); if(!statSync(d).isDirectory()) continue
-      const m=readJsonIfExists(join(d,'manifest.json')); const committed=existsSync(join(d,'COMMITTED'))
+      let m=null, manifestInvalid=false
+      try { m=readJsonIfExists(join(d,'manifest.json')) } catch { manifestInvalid=true }
+      const committed=existsSync(join(d,'COMMITTED'))
       let outcome=null, outcomeInvalid=false
       const op=join(d,'OUTCOME.json')
       if(existsSync(op)){ try{ outcome=JSON.parse(readFileSync(op,'utf8')) }catch{ outcomeInvalid=true } }
-      out.txs.push({txid:tx, manifest:m, committed, outcome, outcomeInvalid}) }
+      out.txs.push({txid:tx, manifest:m, manifestInvalid, committed, outcome, outcomeInvalid}) }
     return out }
 
   #verifySnapshots(tx){
@@ -128,7 +146,10 @@ export class Journal {
     // 两阶段：先全局只读预检，再执行
     const pre=[]
     for(const t of scan.txs){
-      if(this.hasConflict(t.txid)){ report.push({txid:t.txid,result:'CONFLICTED_EXISTING'}); continue }
+      if(t.manifestInvalid){ report.push({txid:t.txid,result:'BAD_MANIFEST'}); continue }
+      const conflictStatus=this.#conflictStatus(t.txid)
+      if(conflictStatus==='conflicted'){ report.push({txid:t.txid,result:'CONFLICTED_EXISTING'}); continue }
+      if(conflictStatus!=='none'){ report.push({txid:t.txid,result: conflictStatus==='bad-evidence' ? 'BAD_EVIDENCE' : 'BAD_REPORT'}); continue }
       if(t.committed){
         pre.push({t, committed:true}); continue
       }

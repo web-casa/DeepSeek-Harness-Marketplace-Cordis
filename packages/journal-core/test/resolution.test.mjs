@@ -144,3 +144,22 @@ test('supersedes cycle is rejected', async ()=>{
   const m=JSON.parse(readFileSync(mp,'utf8')); m.supersedes=rid; writeFileSync(mp,JSON.stringify(m))
   await assert.rejects(()=>c.r.beginResolution({tx, action:'restore-snapshot', plan:restorePlan(c,tx)}), e=>e.code==='BAD_GRAPH')
 })
+
+test('unknown resolution action rejected', async ()=>{
+  const c=make(); const tx=await conflictedTx(c)
+  await assert.rejects(()=>c.r.beginResolution({tx, action:'delete-everything'}), e=>e.code==='BAD_ACTION')
+})
+
+test('active head without outcome cannot be superseded', async ()=>{
+  const c=make(); const tx=await conflictedTx(c)
+  await c.r.beginResolution({tx, action:'restore-snapshot', plan:restorePlan(c,tx)})
+  await assert.rejects(()=>c.r.beginResolution({tx, action:'restore-snapshot', plan:restorePlan(c,tx)}), e=>e.code==='BAD_HEAD')
+})
+
+test('completeResolution is once-only', async ()=>{
+  const c=make(); const tx=await conflictedTx(c)
+  const rid=await c.r.beginResolution({tx, action:'restore-snapshot', plan:restorePlan(c,tx)})
+  await c.r.resolveTarget(rid,'package.json'); await c.r.resolveTarget(rid,'pnpm-lock.yaml')
+  await c.r.completeResolution(rid)
+  await assert.rejects(()=>c.r.completeResolution(rid), e=>e.code==='JOURNALLED')
+})

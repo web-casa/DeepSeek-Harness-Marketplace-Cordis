@@ -68,14 +68,15 @@ export class ResolutionJournal {
 
   async beginResolution({ tx, action, plan = null }){
     this.lock?.fence()
+    if(!['restore-snapshot','accept-current'].includes(action)) throw new ResolutionError('BAD_ACTION','unknown action')
     if(!this.journal.txExists(tx)) throw new ResolutionError('NO_TX','unknown tx: '+tx)
     if(action==='restore-snapshot'){ if(!plan) throw new ResolutionError('BAD_PLAN','plan required'); this.#preflightRestore(tx,plan) }
     if(action==='accept-current' && plan) throw new ResolutionError('BAD_PLAN','plan not allowed for accept-current')
     const { heads }=this.#validateGraphForTx(tx)
     if(heads.length===1){
       const old=heads[0]
-      if(['RESOLVED','ACCEPTED_CURRENT'].includes(old.outcome?.outcome)) throw new ResolutionError('BAD_HEAD','cannot supersede successful terminal head')
-      if(old.outcome && !['RESOLUTION_CONFLICTED','SUPERSEDED'].includes(old.outcome.outcome)) throw new ResolutionError('BAD_HEAD','cannot supersede head outcome '+old.outcome.outcome)
+      // 只允许 supersede 已 RESOLUTION_CONFLICTED 的 head；active 无 outcome 不允许并发 supersede
+      if(old.outcome?.outcome !== 'RESOLUTION_CONFLICTED') throw new ResolutionError('BAD_HEAD','head is not RESOLUTION_CONFLICTED: '+(old.outcome?.outcome??'active'))
     }
     const rid=randomBytes(6).toString('hex')
     const manifest={ v:1, resolutionId:rid, txid:tx, createdAt:Date.now(), supersedes:null, action, state:'PLANNED', plan }
@@ -93,6 +94,8 @@ export class ResolutionJournal {
     this.lock?.fence()
     const m=this.#manifest(rid)
     if(m.action!=='restore-snapshot') throw new ResolutionError('BAD_ACTION','resolveTarget only for restore-snapshot')
+    // 每次 target 写前重跑全量 Phase 0，确保任一其他 snapshot 损坏时本次零 target 写
+    this.#preflightRestore(m.txid, m.plan)
     const plan=m.plan?.[rel]; if(!plan) throw new ResolutionError('BAD_REL','rel not in plan')
     const baseline=this.journal.getBaseline(m.txid)[rel]
     if(!baseline) throw new ResolutionError('BAD_REL','rel missing in original baseline')
@@ -138,7 +141,10 @@ export class ResolutionJournal {
   async completeResolution(rid){
     this.lock?.fence()
     const m=this.#manifest(rid)
+    const existing=readJsonIfExists(this.#outcomePath(rid))
+    if(existing) throw new ResolutionError('JOURNALLED','resolution outcome already exists: '+existing.outcome)
     if(m.action==='restore-snapshot'){
+      this.#preflightRestore(m.txid, m.plan)
       for(const [rel,plan] of Object.entries(m.plan)){
         const cur=fileState(join(this.profile,rel))
         if(cur.exists!==plan.next.exists || cur.hash!==plan.next.hash){
@@ -178,12 +184,15 @@ export class ResolutionJournal {
     const m=this.#manifest(rid); const outcome=readJsonIfExists(this.#outcomePath(rid))
     if(!outcome || !['RESOLVED','ACCEPTED_CURRENT'].includes(outcome.outcome)) throw new ResolutionError('NOT_TERMINAL','resolution not terminal: '+rid)
     const tx=m.txid
+    this.#validateGraphForTx(tx)
     tombstone('journal', join(this.root,'journal',tx))
     tombstone('conflicts', join(this.root,'conflicts',tx))
     const ancestors=[]; const seen=new Set()
     let cur=m.supersedes
     while(cur){ if(seen.has(cur)) throw new ResolutionError('BAD_GRAPH','cycle in supersedes chain'); seen.add(cur)
-      const rm=readJsonIfExists(join(this.#dir(cur),'manifest.json')); if(!rm) break
+      const rm=readJsonIfExists(join(this.#dir(cur),'manifest.json'))
+      if(!rm) throw new ResolutionError('BAD_GRAPH','dangling ancestor during cleanup: '+cur)
+      if(rm.txid!==tx) throw new ResolutionError('BAD_GRAPH','cross-tx ancestor during cleanup')
       ancestors.push(cur); cur=rm.supersedes }
     for(const rid of ancestors.reverse()) tombstone('resolution', this.#dir(rid))
     tombstone('resolution', this.#dir(rid))
