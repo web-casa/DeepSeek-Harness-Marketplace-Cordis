@@ -8,6 +8,6 @@
     "./repair": "./bin/repair.mjs"
   },
   "scripts": {
-    "test": "node --test test/"
+    "test": "cd packages/journal-core && node --test test/*.test.mjs"
   }
 }

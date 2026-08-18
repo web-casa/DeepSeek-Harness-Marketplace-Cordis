@@ -18,4 +18,7 @@
 - S3 完成：ResolutionJournal restore/accept/supersede/cleanup + 8 tests
 - S5a 完成（两轮修复）：物理顺序 reducer + unified validation + durable failpoint 全边界 + 子进程 crash 测试；47 tests 通过。第三轮 codex 复审因账号 usage limit 未能执行。
 - S5b 完成：目录锁 + evidence manifest + validation ticket + 参数化 crash 矩阵；61 tests。
-- S6 TODO
+- S6 完成：freeze report 7/10 gate。
+- S7 完成：G1/G2 崩溃测试 + schema，10/10 gate 全部关闭（POSIX FULL）。
+- S8 完成：G5/G7 关闭、矩阵 17 场景。
+- S9 完成：全部 23 failpoint 点覆盖、29 场景、89 tests。
