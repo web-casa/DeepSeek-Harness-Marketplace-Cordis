@@ -1,0 +1,2 @@
+export const name = 'spike-build'
+export function apply(ctx) { console.log('spike-build applied') }

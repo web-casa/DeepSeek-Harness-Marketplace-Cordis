@@ -1,0 +1,7 @@
+A same-origin => HTTP 200 {"token":"e2546f27f74cc7b554bfb428e9ba63bf","ttl":900}
+B no Origin => HTTP 403 {"error":"origin-missing-or-null","reasons":["origin-missing-or-null"]}
+C Origin null => HTTP 403 {"error":"origin-missing-or-null","reasons":["origin-missing-or-null"]}
+D origin mismatch => HTTP 403 {"error":"origin-host-mismatch","reasons":["origin-host-mismatch","sec-fetch-site=cross-site"]}
+E host evil => HTTP 403 {"error":"host-not-allowed","reasons":["host-not-allowed","origin-host-mismatch"]}
+F sec-fetch cross-site => HTTP 403 {"error":"sec-fetch-site=cross-site","reasons":["sec-fetch-site=cross-site"]}
+G no sec-fetch (curl/old) => HTTP 200 {"token":"e2546f27f74cc7b554bfb428e9ba63bf","ttl":900}

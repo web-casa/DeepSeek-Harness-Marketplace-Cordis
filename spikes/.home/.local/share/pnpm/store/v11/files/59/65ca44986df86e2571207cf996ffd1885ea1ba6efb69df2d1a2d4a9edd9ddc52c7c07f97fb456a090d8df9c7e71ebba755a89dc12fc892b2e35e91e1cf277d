@@ -1,0 +1,1 @@
+{"name":"spike-build","version":"1.0.0","type":"module","main":"lib/index.js","scripts":{"preinstall":"node -e \"require('fs').writeFileSync('.spike-build-ran','yes')\""},"dsh":{"bundle":{"patch":"./cordis.patch.yml"}}}

@@ -1,0 +1,2 @@
+{"loopback":true,"peer":"127.0.0.1","host":"127.0.0.1:35389","sf":"same-origin","so":{"ok":true},"ok":true,"reasons":[]}
+{"loopback":true,"peer":"127.0.0.1","host":"127.0.0.1:35389","sf":"same-site","so":{"ok":false,"reason":"origin-host-mismatch","origin":"http://127.0.0.1:33305","host":"127.0.0.1:35389"},"ok":false,"reasons":["origin-host-mismatch","sec-fetch-site=same-site"]}
