@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { createCatalogHandler, mountCatalogRoutes, parseListQuery } from '../src/index.js'
-import { CatalogError } from '../../catalog-core/src/index.js'
+import { CatalogError } from '@cordis-mp/catalog-core'
 
 function fakeCatalog() {
   return {

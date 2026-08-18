@@ -1,0 +1,37 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+
+  apps/web:
+    dependencies:
+      '@cordis-mp/catalog-core':
+        specifier: workspace:*
+        version: link:../../packages/catalog-core
+      '@cordis-mp/web-harness':
+        specifier: workspace:*
+        version: link:../../packages/web-harness
+
+  packages/catalog-core: {}
+
+  packages/install-core:
+    dependencies:
+      '@cordis-mp/catalog-core':
+        specifier: workspace:*
+        version: link:../catalog-core
+      '@cordis-mp/journal-core':
+        specifier: workspace:*
+        version: link:../journal-core
+
+  packages/journal-core: {}
+
+  packages/web-harness:
+    dependencies:
+      '@cordis-mp/catalog-core':
+        specifier: workspace:*
+        version: link:../catalog-core

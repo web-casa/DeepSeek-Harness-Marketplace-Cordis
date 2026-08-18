@@ -1,5 +1,5 @@
 // DSH host 路由：只读市场目录。挂到 ctx.webServer（或测试用 node:http）。
-import { CatalogError } from '../../catalog-core/src/index.js'
+import { CatalogError } from '@cordis-mp/catalog-core'
 
 const PREFIX = '/cordis-mp'
 

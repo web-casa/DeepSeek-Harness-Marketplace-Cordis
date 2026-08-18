@@ -1,0 +1,12 @@
+{
+  "name": "@cordis-mp/install-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.js" },
+  "dependencies": {
+    "@cordis-mp/catalog-core": "workspace:*",
+    "@cordis-mp/journal-core": "workspace:*"
+  },
+  "scripts": { "test": "node --test test/*.test.mjs" }
+}

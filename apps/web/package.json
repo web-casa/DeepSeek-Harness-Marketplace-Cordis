@@ -1,0 +1,24 @@
+{
+  "name": "@cordis-mp/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client/index.js",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@cordis-mp/catalog-core": "workspace:*",
+    "@cordis-mp/web-harness": "workspace:*"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-runtime", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-ui-settings"]
+    }
+  },
+  "scripts": { "test": "node --test test/*.test.mjs" }
+}
