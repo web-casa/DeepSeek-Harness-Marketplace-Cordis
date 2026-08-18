@@ -1,8 +1,10 @@
-// 从 registry tarball 下载并 inspectArtifact；保留 stagedPath 供后续使用。
-import { mkdtempSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs'
+// 从 registry tarball 流式下载并 inspectArtifact；校验 catalog integrity。
+import { mkdtempSync, writeFileSync, mkdirSync, existsSync, rmSync, createWriteStream } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, createHash } from 'node:crypto'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { inspectTarball, InspectError } from './inspect.mjs'
 
 export class HttpArtifactInspector {
@@ -12,15 +14,39 @@ export class HttpArtifactInspector {
   }
   async inspectArtifact(artifact) {
     if (!artifact?.tarball) throw new InspectError('BAD_ARTIFACT', 'artifact.tarball is required for inspection')
+    if (typeof artifact.integrity !== 'string' || !artifact.integrity.startsWith('sha512-')) throw new InspectError('BAD_ARTIFACT', 'artifact.integrity (sha512) is required')
     const res = await this.fetchImpl(artifact.tarball, { redirect: 'error' })
     if (!res.ok) throw new InspectError('FETCH_FAILED', `tarball fetch failed: HTTP ${res.status}`)
-    const buf = Buffer.from(await res.arrayBuffer())
-    if (buf.length > this.maxBytes) throw new InspectError('ARTIFACT_TOO_LARGE', `tarball exceeds ${this.maxBytes} bytes`)
     const dir = this.cacheDir || mkdtempSync(join(tmpdir(), 'cordis-artifact-'))
     const stagedPath = join(dir, `artifact-${randomBytes(6).toString('hex')}.tgz`)
-    writeFileSync(stagedPath, buf, { mode: 0o600 })
+    const hash = createHash('sha512')
+    let bytes = 0
+    if (res.body && typeof res.body.getReader === 'function') {
+      const reader = res.body.getReader()
+      const out = createWriteStream(stagedPath, { mode: 0o600 })
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          bytes += value.byteLength
+          if (bytes > this.maxBytes) throw new InspectError('ARTIFACT_TOO_LARGE', `tarball exceeds ${this.maxBytes} bytes`)
+          hash.update(value)
+          if (!out.write(value)) await new Promise(r => out.once('drain', r))
+        }
+      } finally { out.end(); reader.releaseLock?.() }
+    } else {
+      const buf = Buffer.from(await res.arrayBuffer())
+      bytes = buf.length
+      if (bytes > this.maxBytes) throw new InspectError('ARTIFACT_TOO_LARGE', `tarball exceeds ${this.maxBytes} bytes`)
+      hash.update(buf); writeFileSync(stagedPath, buf, { mode: 0o600 })
+    }
+    const actual = 'sha512-' + hash.digest('base64')
+    if (actual !== artifact.integrity) {
+      try { rmSync(stagedPath, { force: true }) } catch {}
+      throw new InspectError('INTEGRITY_MISMATCH', `tarball sha512 does not match catalog integrity`)
+    }
     const inspected = await inspectTarball(stagedPath)
-    return { ...inspected, stagedPath, bytes: buf.length }
+    return { ...inspected, stagedPath, bytes }
   }
   cleanup(path) { try { if (existsSync(path)) rmSync(path, { force: true }) } catch {} }
 }

@@ -10,7 +10,7 @@ export function createSessionHandler(guard = new MutationGuard()) {
     if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return }
     const check = guard.session(req)
     if (!check.ok) return json(res, 403, { error: { code: check.reason, message: 'untrusted session request' } })
-    json(res, 200, { token: guard.token, ttl: 900 })
+    json(res, 200, { token: guard.token, ttl: Math.floor(guard.ttlMs / 1000), expiresAt: new Date(guard.tokenIssuedAt + guard.ttlMs).toISOString() })
   }
 }
 export function mountSessionRoute(webServer, guard = new MutationGuard()) {

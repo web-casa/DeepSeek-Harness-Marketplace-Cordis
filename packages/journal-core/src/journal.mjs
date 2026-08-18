@@ -97,6 +97,9 @@ export class Journal {
       const v=this.#validatedTarget(tx,rel)
       if(v.pending) throw new JournalError('PENDING','unconfirmed target: '+rel)
       const current=fileState(this.#profilePath(rel))
+      const baseline=m.targets[rel].state
+      // 未写入且当前等于 baseline 的目标视为 no-op，允许提交
+      if(v.records.length===0 && current.exists===baseline.exists && current.hash===baseline.hash) continue
       if(current.hash!==v.owned.hash||current.exists!==v.owned.exists) throw new JournalError('CONFLICT','final check failed: '+rel)
     }
     this.lock?.fence(); marker(join(this.#txDir(tx),'COMMITTED'))

@@ -132,5 +132,5 @@ test('R2: pending activation survives service restart', async () => {
   const svc2 = new InstallService({ catalog: c.catalog, journal: journal2, packageManager: c.packageManager, activation, pendingPath: join(c.profile, '.cordis-mp') })
   assert.equal(await svc2.recoverPending(), 1)
   assert.equal((await svc2.activate({ slug: 'p' })).status, 'ACTIVE')
-  assert.equal(readFileSync(join(c.profile, '.cordis-mp', 'pending-activation.json'), 'utf8'), '{}')
+  assert.deepEqual(JSON.parse(readFileSync(join(c.profile, '.cordis-mp', 'pending-activation.json'), 'utf8')), { v: 1, items: [] })
 })

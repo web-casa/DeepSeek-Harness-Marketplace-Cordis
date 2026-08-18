@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { HttpArtifactInspector } from '../src/index.js'
 
 function makeTarball() {
@@ -13,18 +14,23 @@ function makeTarball() {
   writeFileSync(join(root, 'cordis.patch.yml'), '- insert:\n    - id: demo-entry\n')
   const out = join(dir, 'pkg.tgz')
   execFileSync('tar', ['-czf', out, '-C', dir, 'package'])
-  return out
+  return { file: out, integrity: 'sha512-' + createHash('sha512').update(readFileSync(out)).digest('base64') }
 }
 
-test('http inspector downloads and inspects tarball', async () => {
-  const file = makeTarball()
+test('http inspector verifies sha512 integrity', async () => {
+  const { file, integrity } = makeTarball()
   const inspector = new HttpArtifactInspector({ fetchImpl: async () => ({ ok: true, status: 200, arrayBuffer: async () => Uint8Array.from(readFileSync(file)).buffer }) })
-  const r = await inspector.inspectArtifact({ tarball: 'https://registry.npmjs.org/demo/-/demo-1.0.0.tgz' })
+  const r = await inspector.inspectArtifact({ tarball: 'https://x/p.tgz', integrity })
   assert.deepEqual(r.entryIds, ['demo-entry'])
-  assert.ok(r.stagedPath.endsWith('.tgz'))
+})
+
+test('http inspector rejects integrity mismatch', async () => {
+  const { file } = makeTarball()
+  const inspector = new HttpArtifactInspector({ fetchImpl: async () => ({ ok: true, status: 200, arrayBuffer: async () => Uint8Array.from(readFileSync(file)).buffer }) })
+  await assert.rejects(() => inspector.inspectArtifact({ tarball: 'https://x/p.tgz', integrity: 'sha512-AAAA' }), e => e.code === 'INTEGRITY_MISMATCH')
 })
 
 test('http inspector rejects non-ok', async () => {
   const inspector = new HttpArtifactInspector({ fetchImpl: async () => ({ ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) }) })
-  await assert.rejects(() => inspector.inspectArtifact({ tarball: 'https://x/y.tgz' }), e => e.code === 'FETCH_FAILED')
+  await assert.rejects(() => inspector.inspectArtifact({ tarball: 'https://x/y.tgz', integrity: 'sha512-AAAA' }), e => e.code === 'FETCH_FAILED')
 })

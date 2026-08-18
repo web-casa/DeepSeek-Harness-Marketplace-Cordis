@@ -24,8 +24,11 @@ export class MutationGuard {
   constructor({ allowedHosts = ['127.0.0.1', 'localhost', '[::1]'], loopbackOnly = true } = {}) {
     this.allowedHosts = new Set(allowedHosts)
     this.loopbackOnly = loopbackOnly
-    this.token = randomBytes(32).toString('hex')
+    this.ttlMs = 15 * 60 * 1000
+    this.#rotateToken()
   }
+  #rotateToken(){ this.token = randomBytes(32).toString('hex'); this.tokenIssuedAt = Date.now() }
+  #tokenExpired(){ return Date.now() - this.tokenIssuedAt > this.ttlMs }
   #baseCheck(req) {
     const reasons = []
     if (this.loopbackOnly && !isLoopback(req.socket?.remoteAddress)) reasons.push('peer-not-loopback')
@@ -37,10 +40,16 @@ export class MutationGuard {
     if (sf && !['same-origin', 'none'].includes(sf)) reasons.push('sec-fetch-site=' + sf)
     return { ok: reasons.length === 0, reasons }
   }
-  session(req) { return this.#baseCheck(req) }
+  session(req) {
+    const base = this.#baseCheck(req)
+    if (!base.ok) return base
+    if (this.#tokenExpired()) this.#rotateToken()
+    return { ...base, ok: true }
+  }
   guard(req) {
     const base = this.#baseCheck(req)
     if (!base.ok) return { ok: false, reason: base.reasons[0], reasons: base.reasons, status: 403 }
+    if (this.#tokenExpired()) return { ok: false, reason: 'token-expired', reasons: [...base.reasons, 'token-expired'], status: 403 }
     const token = req.headers['x-cordis-mp-token']
     if (token !== this.token) return { ok: false, reason: 'bad-token', reasons: [...base.reasons, 'bad-token'], status: 403 }
     return { ok: true, reasons: base.reasons, status: 0 }

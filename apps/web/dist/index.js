@@ -1,6 +1,6 @@
 // apps/web/src/index.js
 import { readFileSync as readFileSync8 } from "node:fs";
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 
 // packages/catalog-core/src/schema.mjs
 var HASH_RE = /^sha(256|512)-[A-Za-z0-9+/=]+$/;
@@ -294,9 +294,11 @@ var InstallService = class {
       tarball: fresh.source.tarball,
       registry: fresh.source.registry
     };
+    let stagedPath = null;
     if (this.inspect) {
       const inspected = await this.inspect.inspectArtifact(artifact);
       artifact.entryIds = inspected?.entryIds || fresh.entryIds || [];
+      stagedPath = inspected?.stagedPath || null;
     } else {
       artifact.entryIds = fresh.entryIds || [];
     }
@@ -321,6 +323,12 @@ var InstallService = class {
         await this.journal.recover();
       } catch {
       }
+      if (stagedPath) {
+        try {
+          this.inspect.cleanup?.(stagedPath);
+        } catch {
+        }
+      }
       if (disable?.entryIds?.length) {
         try {
           await this.activation.cancelDisable(disable.entryIds);
@@ -329,9 +337,15 @@ var InstallService = class {
       }
       throw e;
     }
+    if (stagedPath) {
+      try {
+        this.inspect.cleanup?.(stagedPath);
+      } catch {
+      }
+    }
     const pending = { v: 1, slug, artifact, entryIds: disable?.entryIds || [], entryRevision: fresh.entryRevision, tx, createdAt: Date.now() };
     this.pending.set(slug, pending);
-    await this.#persistPending(pending);
+    await this.#persistPending();
     return { status: "COMMITTED", pendingActivation: true, pending };
   }
   async activate({ slug, signal } = {}) {
@@ -341,19 +355,20 @@ var InstallService = class {
     let activationStatus = null;
     if (pending.entryIds.length) activationStatus = await this.activation.activate(pending.entryIds, signal);
     this.pending.delete(slug);
-    await this.#persistPending({});
+    await this.#persistPending();
     return { status: "ACTIVE", activationStatus };
   }
   #pendingFile() {
     if (!this.pendingPath) return null;
     return join(this.pendingPath, "pending-activation.json");
   }
-  async #persistPending(pending) {
+  async #persistPending() {
     const p2 = this.#pendingFile();
     if (!p2) return;
+    const snapshot = { v: 1, items: [...this.pending.values()] };
     const tx = await this.journal.begin([".cordis-mp/pending-activation.json"]);
     try {
-      await this.journal.writePresent(tx, ".cordis-mp/pending-activation.json", Buffer.from(JSON.stringify(pending)));
+      await this.journal.writePresent(tx, ".cordis-mp/pending-activation.json", Buffer.from(JSON.stringify(snapshot)));
       await this.journal.commitFiles(tx);
     } catch (e) {
       try {
@@ -369,8 +384,8 @@ var InstallService = class {
     if (!p2 || !existsSync(p2)) return 0;
     try {
       const data = JSON.parse(readFileSync(p2, "utf8"));
-      const list = data?.v === 1 && data?.slug ? [data] : [];
-      for (const item of list) this.pending.set(item.slug, item);
+      const list = data?.v === 1 ? Array.isArray(data.items) ? data.items : data.slug ? [data] : [] : [];
+      for (const item of list) if (item?.slug) this.pending.set(item.slug, item);
       return list.length;
     } catch {
       return 0;
@@ -507,7 +522,15 @@ var MutationGuard = class {
   constructor({ allowedHosts = ["127.0.0.1", "localhost", "[::1]"], loopbackOnly = true } = {}) {
     this.allowedHosts = new Set(allowedHosts);
     this.loopbackOnly = loopbackOnly;
+    this.ttlMs = 15 * 60 * 1e3;
+    this.#rotateToken();
+  }
+  #rotateToken() {
     this.token = randomBytes(32).toString("hex");
+    this.tokenIssuedAt = Date.now();
+  }
+  #tokenExpired() {
+    return Date.now() - this.tokenIssuedAt > this.ttlMs;
   }
   #baseCheck(req) {
     const reasons = [];
@@ -521,11 +544,15 @@ var MutationGuard = class {
     return { ok: reasons.length === 0, reasons };
   }
   session(req) {
-    return this.#baseCheck(req);
+    const base = this.#baseCheck(req);
+    if (!base.ok) return base;
+    if (this.#tokenExpired()) this.#rotateToken();
+    return { ...base, ok: true };
   }
   guard(req) {
     const base = this.#baseCheck(req);
     if (!base.ok) return { ok: false, reason: base.reasons[0], reasons: base.reasons, status: 403 };
+    if (this.#tokenExpired()) return { ok: false, reason: "token-expired", reasons: [...base.reasons, "token-expired"], status: 403 };
     const token = req.headers["x-cordis-mp-token"];
     if (token !== this.token) return { ok: false, reason: "bad-token", reasons: [...base.reasons, "bad-token"], status: 403 };
     return { ok: true, reasons: base.reasons, status: 0 };
@@ -546,7 +573,7 @@ function createSessionHandler(guard = new MutationGuard()) {
     }
     const check = guard.session(req);
     if (!check.ok) return json3(res, 403, { error: { code: check.reason, message: "untrusted session request" } });
-    json3(res, 200, { token: guard.token, ttl: 900 });
+    json3(res, 200, { token: guard.token, ttl: Math.floor(guard.ttlMs / 1e3), expiresAt: new Date(guard.tokenIssuedAt + guard.ttlMs).toISOString() });
   };
 }
 function mountSessionRoute(webServer, guard = new MutationGuard()) {
@@ -630,11 +657,11 @@ ${err.message}`, cancelled });
 // packages/dsh-runner/src/package-manager.mjs
 import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
 import { join as join2 } from "node:path";
-var TRACKED = ["package.json", "pnpm-lock.yaml"];
+var TRACKED = ["package.json", "pnpm-lock.yaml", "cordis.patch.yml", ".cordis-mp/state.json"];
 var DshPackageManagerPort = class {
-  constructor({ runner, profileDir: profileDir2, platform = "web" }) {
+  constructor({ runner, profileDir, platform = "web" }) {
     this.runner = runner;
-    this.profileDir = profileDir2;
+    this.profileDir = profileDir;
     this.platform = platform;
   }
   #spec(artifact) {
@@ -668,8 +695,9 @@ var DshPackageManagerPort = class {
 };
 
 // packages/dsh-runner/src/activation.mjs
-import { readFileSync as readFileSync3, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync as readFileSync3, writeFileSync, mkdirSync, renameSync, openSync, fsyncSync, closeSync } from "node:fs";
+import { dirname, join as join3 } from "node:path";
+import { randomBytes as randomBytes2 } from "node:crypto";
 var ROW_ID_RE = /^[A-Za-z0-9_.-]+$/;
 var DshActivationPort = class {
   constructor({ patchPath }) {
@@ -683,8 +711,28 @@ var DshActivationPort = class {
     }
   }
   #save(text) {
-    mkdirSync(dirname(this.patchPath), { recursive: true });
-    writeFileSync(this.patchPath, text);
+    const dir = dirname(this.patchPath);
+    mkdirSync(dir, { recursive: true, mode: 448 });
+    const tmp = join3(dir, `.cordis.patch.${randomBytes2(6).toString("hex")}`);
+    const fd = openSync(tmp, "wx", 384);
+    try {
+      writeFileSync(fd, text);
+    } finally {
+      closeSync(fd);
+    }
+    const r = openSync(tmp, "r");
+    try {
+      fsyncSync(r);
+    } finally {
+      closeSync(r);
+    }
+    renameSync(tmp, this.patchPath);
+    const d = openSync(dir, "r");
+    try {
+      fsyncSync(d);
+    } finally {
+      closeSync(d);
+    }
   }
   readState() {
     const lines = this.#text().split(/\r?\n/);
@@ -721,15 +769,15 @@ var DshActivationPort = class {
     for (const id of ids) {
       let found = false;
       for (let i = 0; i < lines.length - 1; i++) {
-        if (new RegExp(`^- id: ${id}\\s*$`).test(lines[i])) {
-          found = true;
-          if (/^ {2}disabled: true\s*$/.test(lines[i + 1] ?? "")) break;
-          if (/^ {2}disabled: false\s*$/.test(lines[i + 1] ?? "")) {
-            lines[i + 1] = "  disabled: true";
-            changed++;
-          }
-          break;
+        const m2 = /^- id: ([A-Za-z0-9_.-]+)\s*$/.exec(lines[i]);
+        if (!m2 || m2[1] !== id) continue;
+        found = true;
+        if (/^ {2}disabled: true\s*$/.test(lines[i + 1] ?? "")) break;
+        if (/^ {2}disabled: false\s*$/.test(lines[i + 1] ?? "")) {
+          lines[i + 1] = "  disabled: true";
+          changed++;
         }
+        break;
       }
       if (!found) {
         lines.push(`- id: ${id}`, "  disabled: true");
@@ -767,13 +815,13 @@ var DshActivationPort = class {
 
 // packages/journal-core/src/journal.mjs
 import { existsSync as existsSync6, readFileSync as readFileSync7, mkdirSync as mkdirSync4, readdirSync as readdirSync3, statSync as statSync4, copyFileSync } from "node:fs";
-import { join as join5, dirname as dirname3 } from "node:path";
-import { randomBytes as randomBytes4 } from "node:crypto";
+import { join as join6, dirname as dirname3 } from "node:path";
+import { randomBytes as randomBytes5 } from "node:crypto";
 
 // packages/journal-core/src/durable.mjs
-import { openSync, writeFileSync as writeFileSync2, fsyncSync, closeSync, renameSync, unlinkSync, mkdirSync as mkdirSync2, existsSync as existsSync3, appendFileSync, readFileSync as readFileSync4, chmodSync, linkSync, rmSync, readdirSync, statSync } from "node:fs";
-import { join as join3, dirname as dirname2, basename } from "node:path";
-import { randomBytes as randomBytes2 } from "node:crypto";
+import { openSync as openSync2, writeFileSync as writeFileSync2, fsyncSync as fsyncSync2, closeSync as closeSync2, renameSync as renameSync2, unlinkSync, mkdirSync as mkdirSync2, existsSync as existsSync3, appendFileSync, readFileSync as readFileSync4, chmodSync, linkSync, rmSync, readdirSync, statSync } from "node:fs";
+import { join as join4, dirname as dirname2, basename } from "node:path";
+import { randomBytes as randomBytes3 } from "node:crypto";
 
 // packages/journal-core/src/failpoints.mjs
 var registry = /* @__PURE__ */ new Map();
@@ -789,11 +837,11 @@ function failpoint(name2, ctx = {}) {
 var fsyncWarning = false;
 function fsyncDir(dir) {
   try {
-    const fd = openSync(dir, "r");
+    const fd = openSync2(dir, "r");
     try {
-      fsyncSync(fd);
+      fsyncSync2(fd);
     } finally {
-      closeSync(fd);
+      closeSync2(fd);
     }
   } catch (e) {
     if (process.platform === "win32" && ["EISDIR", "EPERM", "EINVAL", "ENOTSUP"].includes(e.code)) {
@@ -809,19 +857,19 @@ function fsyncDir(dir) {
 function atomicFile(path, content, { mode = 384, exclusive = false } = {}) {
   failpoint("atomicFile:before", { path, exclusive });
   mkdirSync2(dirname2(path), { recursive: true, mode: 448 });
-  const tmp = join3(dirname2(path), `.tmp-${randomBytes2(6).toString("hex")}`);
-  const fd = openSync(tmp, "wx", mode);
+  const tmp = join4(dirname2(path), `.tmp-${randomBytes3(6).toString("hex")}`);
+  const fd = openSync2(tmp, "wx", mode);
   try {
     writeFileSync2(fd, content);
   } finally {
-    closeSync(fd);
+    closeSync2(fd);
   }
   chmodSync(tmp, mode);
-  const fd2 = openSync(tmp, "r");
+  const fd2 = openSync2(tmp, "r");
   try {
-    fsyncSync(fd2);
+    fsyncSync2(fd2);
   } finally {
-    closeSync(fd2);
+    closeSync2(fd2);
   }
   failpoint("atomicFile:after-write", { path, exclusive });
   if (exclusive) {
@@ -841,7 +889,7 @@ function atomicFile(path, content, { mode = 384, exclusive = false } = {}) {
     }
     failpoint("atomicFile:after-publish", { path, exclusive });
   } else {
-    renameSync(tmp, path);
+    renameSync2(tmp, path);
     failpoint("atomicFile:after-publish", { path, exclusive });
   }
   failpoint("atomicFile:before-dirfsync", { path, exclusive });
@@ -851,18 +899,18 @@ function atomicFile(path, content, { mode = 384, exclusive = false } = {}) {
 function appendRecord(path, line) {
   failpoint("appendRecord:before", { path });
   mkdirSync2(dirname2(path), { recursive: true, mode: 448 });
-  const fd = openSync(path, "a", 384);
+  const fd = openSync2(path, "a", 384);
   try {
     writeFileSync2(fd, line + "\n");
   } finally {
-    closeSync(fd);
+    closeSync2(fd);
   }
   failpoint("appendRecord:after-write", { path });
-  const fd2 = openSync(path, "r");
+  const fd2 = openSync2(path, "r");
   try {
-    fsyncSync(fd2);
+    fsyncSync2(fd2);
   } finally {
-    closeSync(fd2);
+    closeSync2(fd2);
   }
   failpoint("appendRecord:before-dirfsync", { path });
   fsyncDir(dirname2(path));
@@ -876,23 +924,23 @@ function marker(path) {
 function replaceTarget(path, data, mode = 384) {
   failpoint("replaceTarget:before", { path });
   mkdirSync2(dirname2(path), { recursive: true, mode: 448 });
-  const tmp = join3(dirname2(path), `.tmp-target-${randomBytes2(6).toString("hex")}`);
-  const fd = openSync(tmp, "wx", mode);
+  const tmp = join4(dirname2(path), `.tmp-target-${randomBytes3(6).toString("hex")}`);
+  const fd = openSync2(tmp, "wx", mode);
   try {
     writeFileSync2(fd, data);
   } finally {
-    closeSync(fd);
+    closeSync2(fd);
   }
   failpoint("replaceTarget:after-write", { path });
   chmodSync(tmp, mode);
-  const fd2 = openSync(tmp, "r");
+  const fd2 = openSync2(tmp, "r");
   try {
-    fsyncSync(fd2);
+    fsyncSync2(fd2);
   } finally {
-    closeSync(fd2);
+    closeSync2(fd2);
   }
   failpoint("replaceTarget:before-rename", { path });
-  renameSync(tmp, path);
+  renameSync2(tmp, path);
   failpoint("replaceTarget:after-rename", { path });
   fsyncDir(dirname2(path));
   failpoint("replaceTarget:after-dirfsync", { path });
@@ -915,10 +963,10 @@ function readJsonIfExists(path) {
 function tombstone(kind, dir) {
   failpoint("tombstone:before", { kind, dir });
   if (!existsSync3(dir)) return;
-  const trashRoot = join3(dirname2(dirname2(dir)), "trash");
+  const trashRoot = join4(dirname2(dirname2(dir)), "trash");
   mkdirSync2(trashRoot, { recursive: true, mode: 448 });
-  const target = join3(trashRoot, `${kind}-${basename(dir)}-${randomBytes2(6).toString("hex")}`);
-  renameSync(dir, target);
+  const target = join4(trashRoot, `${kind}-${basename(dir)}-${randomBytes3(6).toString("hex")}`);
+  renameSync2(dir, target);
   failpoint("tombstone:after-rename", { kind, dir, target });
   fsyncDir(dirname2(dir));
   failpoint("tombstone:after-src-fsync", { kind, dir, target });
@@ -927,10 +975,10 @@ function tombstone(kind, dir) {
   rmSync(target, { recursive: true, force: true });
 }
 function sweepTrash(root, { olderThanMs = 60 * 60 * 1e3 } = {}) {
-  const trashRoot = join3(root, "trash");
+  const trashRoot = join4(root, "trash");
   if (!existsSync3(trashRoot)) return;
   for (const name2 of readdirSync(trashRoot)) {
-    const p2 = join3(trashRoot, name2);
+    const p2 = join4(trashRoot, name2);
     try {
       if (Date.now() - statSync(p2).mtimeMs < olderThanMs) continue;
       rmSync(p2, { recursive: true, force: true });
@@ -940,15 +988,15 @@ function sweepTrash(root, { olderThanMs = 60 * 60 * 1e3 } = {}) {
 }
 
 // packages/journal-core/src/lock.mjs
-import { mkdirSync as mkdirSync3, readFileSync as readFileSync5, renameSync as renameSync2, rmSync as rmSync2, existsSync as existsSync4, readdirSync as readdirSync2, statSync as statSync2 } from "node:fs";
-import { join as join4 } from "node:path";
-import { randomBytes as randomBytes3 } from "node:crypto";
-var PROCESS_TOKEN = randomBytes3(8).toString("hex");
+import { mkdirSync as mkdirSync3, readFileSync as readFileSync5, renameSync as renameSync3, rmSync as rmSync2, existsSync as existsSync4, readdirSync as readdirSync2, statSync as statSync2 } from "node:fs";
+import { join as join5 } from "node:path";
+import { randomBytes as randomBytes4 } from "node:crypto";
+var PROCESS_TOKEN = randomBytes4(8).toString("hex");
 function sweepLockDebris(root, { olderThanMs = 6e4 } = {}) {
   if (!existsSync4(root)) return;
   for (const name2 of readdirSync2(root)) {
     if (!name2.startsWith("lock.stolen-")) continue;
-    const p2 = join4(root, name2);
+    const p2 = join5(root, name2);
     try {
       if (!statSync2(p2).isDirectory()) continue;
       if (Date.now() - statSync2(p2).mtimeMs > olderThanMs) rmSync2(p2, { recursive: true, force: true });
@@ -1169,24 +1217,24 @@ var Journal = class {
   constructor({ journalRoot, profileRoot, lock = null }) {
     this.root = journalRoot;
     this.profile = profileRoot;
-    this.txDir = join5(journalRoot, "journal");
+    this.txDir = join6(journalRoot, "journal");
     this.lock = lock;
   }
   #assertRel(rel) {
     if (!ALLOWED.has(rel)) throw new JournalError("BAD_TARGET", "target not allowed: " + rel);
   }
   #txDir(tx) {
-    return join5(this.txDir, tx);
+    return join6(this.txDir, tx);
   }
   #profilePath(rel) {
-    return join5(this.profile, rel);
+    return join6(this.profile, rel);
   }
   async begin(targets) {
     if (!Array.isArray(targets) || targets.length === 0) throw new JournalError("BAD_TARGETS", "targets must not be empty");
     this.lock?.fence();
     const active = this.scan().txs.filter((t) => !t.committed && !(t.outcome && t.outcome.outcome === "ROLLED_BACK"));
     if (active.length > 0) throw new JournalError("ACTIVE_TX", "an active journal transaction already exists: " + active.map((t) => t.txid).join(","));
-    const txid = randomBytes4(6).toString("hex");
+    const txid = randomBytes5(6).toString("hex");
     const manifest = { v: 1, txid, state: "PREPARING", createdAt: Date.now(), targets: {} };
     const dir = this.#txDir(txid);
     mkdirSync4(dir, { recursive: true, mode: 448 });
@@ -1198,16 +1246,16 @@ var Journal = class {
       if (st2.exists) {
         baseline.length = readFileSync7(p2).length;
         baseline.mode = modeOf(p2) || "0644";
-        atomicFile(join5(dir, "snapshots", targetKey(rel) + ".bin"), readFileSync7(p2), { mode: 384 });
+        atomicFile(join6(dir, "snapshots", targetKey(rel) + ".bin"), readFileSync7(p2), { mode: 384 });
       }
       manifest.targets[rel] = baseline;
     }
     manifest.state = "PREPARED";
-    atomicFile(join5(dir, "manifest.json"), JSON.stringify(manifest, null, 2), { mode: 384 });
+    atomicFile(join6(dir, "manifest.json"), JSON.stringify(manifest, null, 2), { mode: 384 });
     return txid;
   }
   #loadManifest(tx) {
-    const raw = readJsonIfExists(join5(this.#txDir(tx), "manifest.json"));
+    const raw = readJsonIfExists(join6(this.#txDir(tx), "manifest.json"));
     if (!raw) throw new JournalError("NO_MANIFEST", "no manifest");
     try {
       return validateManifest(raw);
@@ -1216,7 +1264,7 @@ var Journal = class {
     }
   }
   #opsPath(tx, rel) {
-    return join5(this.#txDir(tx), "ops", targetKey(rel) + ".jsonl");
+    return join6(this.#txDir(tx), "ops", targetKey(rel) + ".jsonl");
   }
   #parseTarget(tx, rel) {
     const p2 = this.#opsPath(tx, rel);
@@ -1300,14 +1348,16 @@ var Journal = class {
       const v2 = this.#validatedTarget(tx, rel);
       if (v2.pending) throw new JournalError("PENDING", "unconfirmed target: " + rel);
       const current = fileState(this.#profilePath(rel));
+      const baseline = m2.targets[rel].state;
+      if (v2.records.length === 0 && current.exists === baseline.exists && current.hash === baseline.hash) continue;
       if (current.hash !== v2.owned.hash || current.exists !== v2.owned.exists) throw new JournalError("CONFLICT", "final check failed: " + rel);
     }
     this.lock?.fence();
-    marker(join5(this.#txDir(tx), "COMMITTED"));
+    marker(join6(this.#txDir(tx), "COMMITTED"));
     m2.state = "FILE_COMMITTED";
-    atomicFile(join5(this.#txDir(tx), "manifest.json"), JSON.stringify(m2, null, 2), { mode: 384 });
+    atomicFile(join6(this.#txDir(tx), "manifest.json"), JSON.stringify(m2, null, 2), { mode: 384 });
     this.lock?.fence();
-    atomicFile(join5(this.#txDir(tx), "OUTCOME.json"), JSON.stringify({ v: 1, txid: tx, outcome: "COMMITTED" }), { mode: 384 });
+    atomicFile(join6(this.#txDir(tx), "OUTCOME.json"), JSON.stringify({ v: 1, txid: tx, outcome: "COMMITTED" }), { mode: 384 });
   }
   getBaseline(tx) {
     return this.#loadManifest(tx).targets;
@@ -1316,16 +1366,16 @@ var Journal = class {
     const b2 = this.getBaseline(tx)[rel];
     if (!b2) return null;
     if (!b2.state.exists) return null;
-    return readFileSync7(join5(this.#txDir(tx), "snapshots", targetKey(rel) + ".bin"));
+    return readFileSync7(join6(this.#txDir(tx), "snapshots", targetKey(rel) + ".bin"));
   }
   txExists(tx) {
-    return existsSync6(join5(this.#txDir(tx), "manifest.json"));
+    return existsSync6(join6(this.#txDir(tx), "manifest.json"));
   }
   hasConflict(tx) {
     return this.#conflictStatus(tx) === "conflicted";
   }
   #conflictStatus(tx) {
-    const reportPath = join5(this.root, "conflicts", tx, "report.json");
+    const reportPath = join6(this.root, "conflicts", tx, "report.json");
     if (!existsSync6(reportPath)) return "none";
     let report;
     try {
@@ -1334,11 +1384,11 @@ var Journal = class {
       return "bad-report";
     }
     if (report.txid !== tx) return "bad-report";
-    const ev = join5(this.root, "conflicts", tx, "evidence");
+    const ev = join6(this.root, "conflicts", tx, "evidence");
     if (Array.isArray(report.evidence)) {
       for (const e of report.evidence) {
         if (!e || typeof e.name !== "string" || typeof e.hash !== "string" || !Number.isInteger(e.length)) return "bad-report";
-        const f2 = join5(ev, e.name);
+        const f2 = join6(ev, e.name);
         try {
           if (!existsSync6(f2)) return "bad-evidence";
           const bytes = readFileSync7(f2);
@@ -1350,8 +1400,8 @@ var Journal = class {
     }
     for (const c of report.conflicts) {
       if (!c || typeof c.rel !== "string" || !c.state) return "bad-report";
-      const f2 = join5(ev, targetKey(c.rel) + ".bin");
-      const a = join5(ev, targetKey(c.rel) + ".absent.json");
+      const f2 = join6(ev, targetKey(c.rel) + ".bin");
+      const a = join6(ev, targetKey(c.rel) + ".absent.json");
       if (c.state.exists) {
         if (!existsSync6(f2)) return "bad-evidence";
         try {
@@ -1367,18 +1417,18 @@ var Journal = class {
     const out = { txs: [] };
     if (!existsSync6(this.txDir)) return out;
     for (const tx of readdirSync3(this.txDir)) {
-      const d = join5(this.txDir, tx);
+      const d = join6(this.txDir, tx);
       if (!statSync4(d).isDirectory()) continue;
       let m2 = null, manifestInvalid = false;
       try {
-        const raw = readJsonIfExists(join5(d, "manifest.json"));
+        const raw = readJsonIfExists(join6(d, "manifest.json"));
         if (raw) m2 = validateManifest(raw);
       } catch {
         manifestInvalid = true;
       }
-      const committed = existsSync6(join5(d, "COMMITTED"));
+      const committed = existsSync6(join6(d, "COMMITTED"));
       let outcome = null, outcomeInvalid = false;
-      const op = join5(d, "OUTCOME.json");
+      const op = join6(d, "OUTCOME.json");
       if (existsSync6(op)) {
         try {
           outcome = validateOutcome(JSON.parse(readFileSync7(op, "utf8")));
@@ -1394,7 +1444,7 @@ var Journal = class {
     const m2 = this.#loadManifest(tx);
     for (const [rel, b2] of Object.entries(m2.targets)) {
       if (!b2.state.exists) continue;
-      const snap = join5(this.#txDir(tx), "snapshots", targetKey(rel) + ".bin");
+      const snap = join6(this.#txDir(tx), "snapshots", targetKey(rel) + ".bin");
       if (!existsSync6(snap)) throw new JournalError("SNAPSHOT_MISSING", "snapshot missing: " + rel);
       const bytes = readFileSync7(snap);
       if (sha256(bytes) !== b2.state.hash) throw new JournalError("SNAPSHOT_BAD", "snapshot hash mismatch: " + rel);
@@ -1493,7 +1543,7 @@ var Journal = class {
           report.push({ txid: p2.t.txid, result: "BAD_OUTCOME" });
           continue;
         }
-        if (!p2.t.outcome) atomicFile(join5(this.#txDir(p2.t.txid), "OUTCOME.json"), JSON.stringify({ v: 1, txid: p2.t.txid, outcome: "COMMITTED" }), { mode: 384 });
+        if (!p2.t.outcome) atomicFile(join6(this.#txDir(p2.t.txid), "OUTCOME.json"), JSON.stringify({ v: 1, txid: p2.t.txid, outcome: "COMMITTED" }), { mode: 384 });
         tombstone("journal", this.#txDir(p2.t.txid));
         report.push({ txid: p2.t.txid, result: "COMMITTED_OK" });
         continue;
@@ -1548,7 +1598,7 @@ var Journal = class {
           continue outer;
         }
       }
-      atomicFile(join5(this.#txDir(p2.t.txid), "OUTCOME.json"), JSON.stringify({ v: 1, txid: p2.t.txid, outcome: "ROLLED_BACK" }), { mode: 384 });
+      atomicFile(join6(this.#txDir(p2.t.txid), "OUTCOME.json"), JSON.stringify({ v: 1, txid: p2.t.txid, outcome: "ROLLED_BACK" }), { mode: 384 });
       report.push({ txid: p2.t.txid, result: "ROLLED_BACK" });
     }
     return report;
@@ -1566,7 +1616,7 @@ var Journal = class {
     const cur = fileState(p2);
     if (cur.hash !== owned.hash || cur.exists !== owned.exists) throw new JournalError("CONFLICT", "rollback optimistic check failed: " + rel);
     if (baseline.state.exists) {
-      const bytes = readFileSync7(join5(this.#txDir(tx), "snapshots", targetKey(rel) + ".bin"));
+      const bytes = readFileSync7(join6(this.#txDir(tx), "snapshots", targetKey(rel) + ".bin"));
       const op = this.#beginOp(tx, rel, { kind: "ROLLBACK", expected: owned, next: baseline.state, mode: baseline.mode, length: bytes.length });
       this.lock?.fence();
       replaceTarget(p2, bytes, parseInt(baseline.mode || "0644", 8));
@@ -1583,25 +1633,25 @@ var Journal = class {
     }
   }
   async archiveConflict(tx, conflicts) {
-    const d = join5(this.root, "conflicts", tx);
-    if (existsSync6(join5(d, "report.json"))) throw new JournalError("JOURNALLED", "conflict report already exists for tx: " + tx);
-    mkdirSync4(join5(d, "evidence"), { recursive: true, mode: 448 });
+    const d = join6(this.root, "conflicts", tx);
+    if (existsSync6(join6(d, "report.json"))) throw new JournalError("JOURNALLED", "conflict report already exists for tx: " + tx);
+    mkdirSync4(join6(d, "evidence"), { recursive: true, mode: 448 });
     const txd = this.#txDir(tx);
     const entries = [];
     const addEntry = (relPath, bytes) => {
-      const target = join5(d, "evidence", relPath);
+      const target = join6(d, "evidence", relPath);
       mkdirSync4(dirname3(target), { recursive: true, mode: 448 });
       atomicFile(target, bytes, { mode: 384 });
       entries.push({ name: relPath, hash: sha256(bytes), length: bytes.length });
     };
-    if (existsSync6(join5(txd, "manifest.json"))) addEntry("manifest.json", readFileSync7(join5(txd, "manifest.json")));
-    const opsDir = join5(txd, "ops");
+    if (existsSync6(join6(txd, "manifest.json"))) addEntry("manifest.json", readFileSync7(join6(txd, "manifest.json")));
+    const opsDir = join6(txd, "ops");
     if (existsSync6(opsDir)) {
-      for (const f2 of readdirSync3(opsDir)) addEntry("ops/" + f2, readFileSync7(join5(opsDir, f2)));
+      for (const f2 of readdirSync3(opsDir)) addEntry("ops/" + f2, readFileSync7(join6(opsDir, f2)));
     }
-    const snapDir = join5(txd, "snapshots");
+    const snapDir = join6(txd, "snapshots");
     if (existsSync6(snapDir)) {
-      for (const f2 of readdirSync3(snapDir)) addEntry("snapshots/" + f2, readFileSync7(join5(snapDir, f2)));
+      for (const f2 of readdirSync3(snapDir)) addEntry("snapshots/" + f2, readFileSync7(join6(snapDir, f2)));
     }
     for (const c of conflicts) {
       const rel = c.rel;
@@ -1613,11 +1663,11 @@ var Journal = class {
         if (sha256(bytes) !== st2.hash) throw new JournalError("EVIDENCE_BAD", "evidence copy hash mismatch");
       } else addEntry(targetKey(rel) + ".absent.json", Buffer.from(JSON.stringify({ exists: false })));
     }
-    atomicFile(join5(d, "evidence-manifest.json"), JSON.stringify({ v: 1, txid: tx, entries }, null, 2), { mode: 384 });
-    atomicFile(join5(d, "report.json"), JSON.stringify({ v: 1, txid: tx, detectedAt: Date.now(), conflicts, evidence: entries }, null, 2), { mode: 384 });
+    atomicFile(join6(d, "evidence-manifest.json"), JSON.stringify({ v: 1, txid: tx, entries }, null, 2), { mode: 384 });
+    atomicFile(join6(d, "report.json"), JSON.stringify({ v: 1, txid: tx, detectedAt: Date.now(), conflicts, evidence: entries }, null, 2), { mode: 384 });
     const m2 = this.#loadManifest(tx);
     m2.state = "CONFLICTED";
-    atomicFile(join5(txd, "manifest.json"), JSON.stringify(m2, null, 2), { mode: 384 });
+    atomicFile(join6(txd, "manifest.json"), JSON.stringify(m2, null, 2), { mode: 384 });
   }
 };
 
@@ -4610,30 +4660,48 @@ function parsePatchIds(text) {
   return ids;
 }
 async function inspectTarball(file, { maxEntryBytes = 4 * 1024 * 1024, maxEntries = 4096 } = {}) {
-  let pkgText = null, patchText = null, entries = 0;
+  let pkgText = null, patchText = null, entries = 0, fail = null;
   const badPath = /(^|\/)\.\.(\/|$)|^\/|\\/;
   await Ct({
     file,
     onReadEntry(entry) {
-      entries++;
-      if (entries > maxEntries) throw new InspectError("TOO_MANY_ENTRIES", "tar has too many entries");
-      if (badPath.test(entry.path)) throw new InspectError("BAD_PATH", "unsafe tar path: " + entry.path);
-      const size = Number(entry.size || 0);
-      if (size > maxEntryBytes) throw new InspectError("ENTRY_TOO_LARGE", "tar entry too large: " + entry.path);
+      if (fail) return;
+      try {
+        entries++;
+        if (entries > maxEntries) {
+          fail = new InspectError("TOO_MANY_ENTRIES", "tar has too many entries");
+          return;
+        }
+        if (badPath.test(entry.path)) {
+          fail = new InspectError("BAD_PATH", "unsafe tar path: " + entry.path);
+          return;
+        }
+        const size = Number(entry.size || 0);
+        if (size > maxEntryBytes) {
+          fail = new InspectError("ENTRY_TOO_LARGE", "tar entry too large: " + entry.path);
+          return;
+        }
+      } catch (e) {
+        fail = e;
+        return;
+      }
       const wanted = entry.path === "package/package.json" || entry.path === "package/cordis.patch.yml";
       if (!wanted) return;
       const chunks = [];
       entry.on("data", (c) => {
+        if (fail) return;
         chunks.push(c);
-        if (chunks.reduce((n, b2) => n + b2.length, 0) > maxEntryBytes) throw new InspectError("ENTRY_TOO_LARGE", "entry exceeded limit while reading");
+        if (chunks.reduce((n, b2) => n + b2.length, 0) > maxEntryBytes) fail = new InspectError("ENTRY_TOO_LARGE", "entry exceeded limit while reading");
       });
       entry.on("end", () => {
+        if (fail) return;
         const text = Buffer.concat(chunks).toString("utf8");
         if (entry.path === "package/package.json") pkgText = text;
         else patchText = text;
       });
     }
   });
+  if (fail) throw fail;
   if (!pkgText) throw new InspectError("BAD_MANIFEST", "package/package.json not found in tarball");
   let pkg;
   try {
@@ -4660,10 +4728,10 @@ function normalizeInspect(pkg, patchText) {
 }
 
 // packages/inspect-core/src/http-inspector.mjs
-import { mkdtempSync, writeFileSync as writeFileSync3, mkdirSync as mkdirSync5, existsSync as existsSync7, rmSync as rmSync3 } from "node:fs";
-import { join as join6 } from "node:path";
+import { mkdtempSync, writeFileSync as writeFileSync3, mkdirSync as mkdirSync5, existsSync as existsSync7, rmSync as rmSync3, createWriteStream } from "node:fs";
+import { join as join7 } from "node:path";
 import { tmpdir } from "node:os";
-import { randomBytes as randomBytes5 } from "node:crypto";
+import { randomBytes as randomBytes6, createHash as createHash2 } from "node:crypto";
 var HttpArtifactInspector = class {
   constructor({ cacheDir = null, fetchImpl = fetch, maxBytes = 128 * 1024 * 1024 } = {}) {
     this.cacheDir = cacheDir;
@@ -4673,15 +4741,46 @@ var HttpArtifactInspector = class {
   }
   async inspectArtifact(artifact) {
     if (!artifact?.tarball) throw new InspectError("BAD_ARTIFACT", "artifact.tarball is required for inspection");
+    if (typeof artifact.integrity !== "string" || !artifact.integrity.startsWith("sha512-")) throw new InspectError("BAD_ARTIFACT", "artifact.integrity (sha512) is required");
     const res = await this.fetchImpl(artifact.tarball, { redirect: "error" });
     if (!res.ok) throw new InspectError("FETCH_FAILED", `tarball fetch failed: HTTP ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > this.maxBytes) throw new InspectError("ARTIFACT_TOO_LARGE", `tarball exceeds ${this.maxBytes} bytes`);
-    const dir = this.cacheDir || mkdtempSync(join6(tmpdir(), "cordis-artifact-"));
-    const stagedPath = join6(dir, `artifact-${randomBytes5(6).toString("hex")}.tgz`);
-    writeFileSync3(stagedPath, buf, { mode: 384 });
+    const dir = this.cacheDir || mkdtempSync(join7(tmpdir(), "cordis-artifact-"));
+    const stagedPath = join7(dir, `artifact-${randomBytes6(6).toString("hex")}.tgz`);
+    const hash = createHash2("sha512");
+    let bytes = 0;
+    if (res.body && typeof res.body.getReader === "function") {
+      const reader = res.body.getReader();
+      const out = createWriteStream(stagedPath, { mode: 384 });
+      try {
+        for (; ; ) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          bytes += value.byteLength;
+          if (bytes > this.maxBytes) throw new InspectError("ARTIFACT_TOO_LARGE", `tarball exceeds ${this.maxBytes} bytes`);
+          hash.update(value);
+          if (!out.write(value)) await new Promise((r) => out.once("drain", r));
+        }
+      } finally {
+        out.end();
+        reader.releaseLock?.();
+      }
+    } else {
+      const buf = Buffer.from(await res.arrayBuffer());
+      bytes = buf.length;
+      if (bytes > this.maxBytes) throw new InspectError("ARTIFACT_TOO_LARGE", `tarball exceeds ${this.maxBytes} bytes`);
+      hash.update(buf);
+      writeFileSync3(stagedPath, buf, { mode: 384 });
+    }
+    const actual = "sha512-" + hash.digest("base64");
+    if (actual !== artifact.integrity) {
+      try {
+        rmSync3(stagedPath, { force: true });
+      } catch {
+      }
+      throw new InspectError("INTEGRITY_MISMATCH", `tarball sha512 does not match catalog integrity`);
+    }
     const inspected = await inspectTarball(stagedPath);
-    return { ...inspected, stagedPath, bytes: buf.length };
+    return { ...inspected, stagedPath, bytes };
   }
   cleanup(path) {
     try {
@@ -4701,23 +4800,26 @@ function loadSnapshot() {
     return null;
   }
 }
-function profileDir() {
-  if (process.env.CORDIS_MP_PROFILE_DIR) return process.env.CORDIS_MP_PROFILE_DIR;
-  const home = process.env.DSH_HOME || join7(process.env.HOME || ".", ".dsh");
-  return join7(home, "profiles", process.env.CORDIS_MP_PROFILE || "web");
+function createRuntime({ dir = null, baseUrl = null, dshHome = null, profile = null } = {}) {
+  const resolvedDir = dir || (() => {
+    if (process.env.CORDIS_MP_PROFILE_DIR) return process.env.CORDIS_MP_PROFILE_DIR;
+    const home = dshHome || process.env.DSH_HOME || join8(process.env.HOME || ".", ".dsh");
+    return join8(home, "profiles", profile || process.env.CORDIS_MP_PROFILE || "web");
+  })();
+  const base = (baseUrl || process.env.CORDIS_RUN_API || "https://cordis.run/api/v1").replace(/\/+$/, "");
+  const catalog = new CatalogClient({ baseUrl: base, snapshot: loadSnapshot() });
+  const runner = new DshRunner({ dshHome: dshHome ?? process.env.DSH_HOME, profile: profile ?? process.env.CORDIS_MP_PROFILE ?? "web" });
+  const packageManager = new DshPackageManagerPort({ runner, profileDir: resolvedDir });
+  const journal = new Journal({ journalRoot: join8(resolvedDir, ".cordis-mp"), profileRoot: resolvedDir });
+  const activation = new DshActivationPort({ patchPath: join8(resolvedDir, "cordis.patch.yml") });
+  const inspect = new HttpArtifactInspector({ cacheDir: join8(resolvedDir, ".cordis-mp", "artifacts") });
+  const installService = new InstallService({ catalog, journal, packageManager, activation, inspect, pendingPath: join8(resolvedDir, ".cordis-mp") });
+  return { dir: resolvedDir, base, catalog, journal, packageManager, activation, inspect, installService };
 }
 function apply(ctx) {
   ctx.inject(["webServer"], (hostCtx) => {
     const webServer = hostCtx.webServer;
-    const base = (process.env.CORDIS_RUN_API || "https://cordis.run/api/v1").replace(/\/+$/, "");
-    const catalog = new CatalogClient({ baseUrl: base, snapshot: loadSnapshot() });
-    const dir = profileDir();
-    const runner = new DshRunner({ dshHome: process.env.DSH_HOME, profile: process.env.CORDIS_MP_PROFILE || "web" });
-    const packageManager = new DshPackageManagerPort({ runner, profileDir: dir });
-    const journal = new Journal({ journalRoot: join7(dir, ".cordis-mp"), profileRoot: dir });
-    const activation = new DshActivationPort({ patchPath: join7(dir, "cordis.patch.yml") });
-    const inspect = new HttpArtifactInspector({ cacheDir: join7(dir, ".cordis-mp", "artifacts") });
-    const installService = new InstallService({ catalog, journal, packageManager, activation, inspect, pendingPath: join7(dir, ".cordis-mp") });
+    const { installService, catalog } = createRuntime();
     const guard = new MutationGuard();
     hostCtx.effect(() => {
       const a = mountCatalogRoutes(webServer, catalog);
@@ -4733,6 +4835,7 @@ function apply(ctx) {
 }
 export {
   apply,
+  createRuntime,
   inject,
   name
 };

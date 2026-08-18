@@ -2,7 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-const TRACKED = ['package.json', 'pnpm-lock.yaml']
+const TRACKED = ['package.json', 'pnpm-lock.yaml', 'cordis.patch.yml', '.cordis-mp/state.json']
 
 export class DshPackageManagerPort {
   constructor({ runner, profileDir, platform = 'web' }) {

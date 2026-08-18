@@ -1,14 +1,24 @@
 // DshActivationPort：用户补丁层 cordis.patch.yml 的禁用/启用读写。
 // 行级文本操作，避免 YAML 重排破坏注释与 !!js 表达式。
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { readFileSync, writeFileSync, mkdirSync, renameSync, openSync, fsyncSync, closeSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { randomBytes } from 'node:crypto'
 
 const ROW_ID_RE = /^[A-Za-z0-9_.-]+$/
 
 export class DshActivationPort {
   constructor({ patchPath }) { this.patchPath = patchPath }
   #text() { try { return readFileSync(this.patchPath, 'utf8') } catch { return '[]\n' } }
-  #save(text) { mkdirSync(dirname(this.patchPath), { recursive: true }); writeFileSync(this.patchPath, text) }
+  #save(text) {
+    const dir = dirname(this.patchPath)
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    const tmp = join(dir, `.cordis.patch.${randomBytes(6).toString('hex')}`)
+    const fd = openSync(tmp, 'wx', 0o600)
+    try { writeFileSync(fd, text) } finally { closeSync(fd) }
+    const r = openSync(tmp, 'r'); try { fsyncSync(r) } finally { closeSync(r) }
+    renameSync(tmp, this.patchPath)
+    const d = openSync(dir, 'r'); try { fsyncSync(d) } finally { closeSync(d) }
+  }
   readState() {
     const lines = this.#text().split(/\r?\n/)
     const disables = []; const forced = []; const inserts = []
@@ -39,12 +49,12 @@ export class DshActivationPort {
     for (const id of ids) {
       let found = false
       for (let i = 0; i < lines.length - 1; i++) {
-        if (new RegExp(`^- id: ${id}\\s*$`).test(lines[i])) {
-          found = true
-          if (/^ {2}disabled: true\s*$/.test(lines[i + 1] ?? '')) break
-          if (/^ {2}disabled: false\s*$/.test(lines[i + 1] ?? '')) { lines[i + 1] = '  disabled: true'; changed++ }
-          break
-        }
+        const m = /^- id: ([A-Za-z0-9_.-]+)\s*$/.exec(lines[i])
+        if (!m || m[1] !== id) continue
+        found = true
+        if (/^ {2}disabled: true\s*$/.test(lines[i + 1] ?? '')) break
+        if (/^ {2}disabled: false\s*$/.test(lines[i + 1] ?? '')) { lines[i + 1] = '  disabled: true'; changed++ }
+        break
       }
       if (!found) { lines.push(`- id: ${id}`, '  disabled: true'); changed++ }
     }

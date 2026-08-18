@@ -34,9 +34,11 @@ export class InstallService {
       registry: fresh.source.registry,
     }
     // R1：安装前 INSPECT 解析 entryIds（tarball/目录）；catalog entryIds 作为兜底。
+    let stagedPath = null
     if (this.inspect) {
       const inspected = await this.inspect.inspectArtifact(artifact)
       artifact.entryIds = inspected?.entryIds || fresh.entryIds || []
+      stagedPath = inspected?.stagedPath || null
     } else {
       artifact.entryIds = fresh.entryIds || []
     }
@@ -59,12 +61,14 @@ export class InstallService {
     } catch (e) {
       if (e.code === 'FP_INJECTED') throw e
       try { await this.journal.recover() } catch {}
+      if (stagedPath) { try { this.inspect.cleanup?.(stagedPath) } catch {} }
       if (disable?.entryIds?.length) { try { await this.activation.cancelDisable(disable.entryIds) } catch {} }
       throw e
     }
+    if (stagedPath) { try { this.inspect.cleanup?.(stagedPath) } catch {} }
     const pending = { v: 1, slug, artifact, entryIds: disable?.entryIds || [], entryRevision: fresh.entryRevision, tx, createdAt: Date.now() }
     this.pending.set(slug, pending)
-    await this.#persistPending(pending)
+    await this.#persistPending()
     return { status: 'COMMITTED', pendingActivation: true, pending }
   }
 
@@ -75,16 +79,17 @@ export class InstallService {
     let activationStatus = null
     if (pending.entryIds.length) activationStatus = await this.activation.activate(pending.entryIds, signal)
     this.pending.delete(slug)
-    await this.#persistPending({})
+    await this.#persistPending()
     return { status: 'ACTIVE', activationStatus }
   }
 
   #pendingFile() { if (!this.pendingPath) return null; return join(this.pendingPath, 'pending-activation.json') }
-  async #persistPending(pending) {
+  async #persistPending() {
     const p = this.#pendingFile(); if (!p) return
+    const snapshot = { v: 1, items: [...this.pending.values()] }
     const tx = await this.journal.begin(['.cordis-mp/pending-activation.json'])
     try {
-      await this.journal.writePresent(tx, '.cordis-mp/pending-activation.json', Buffer.from(JSON.stringify(pending)))
+      await this.journal.writePresent(tx, '.cordis-mp/pending-activation.json', Buffer.from(JSON.stringify(snapshot)))
       await this.journal.commitFiles(tx)
     } catch (e) { try { await this.journal.recover() } catch {}; throw e }
   }
@@ -92,8 +97,8 @@ export class InstallService {
     const p = this.#pendingFile(); if (!p || !existsSync(p)) return 0
     try {
       const data = JSON.parse(readFileSync(p, 'utf8'))
-      const list = data?.v === 1 && data?.slug ? [data] : []
-      for (const item of list) this.pending.set(item.slug, item)
+      const list = data?.v === 1 ? (Array.isArray(data.items) ? data.items : data.slug ? [data] : []) : []
+      for (const item of list) if (item?.slug) this.pending.set(item.slug, item)
       return list.length
     } catch { return 0 }
   }

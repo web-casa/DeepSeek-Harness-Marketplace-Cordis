@@ -38,3 +38,11 @@ test('activate without disable rows is idempotent', async () => {
   assert.equal(port.activate(['a']), 0)
   assert.deepEqual(port.readState().forced, ['a'])
 })
+
+test('preDisable matches id literally, dot does not match any char', async () => {
+  const { port } = setup('- id: aXb\n  disabled: false\n- id: a.b\n  disabled: false\n')
+  assert.equal(port.preDisable(['a.b']), 1)
+  const state = port.readState()
+  assert.deepEqual(state.forced, ['aXb'])
+  assert.deepEqual(state.disables, ['a.b'])
+})

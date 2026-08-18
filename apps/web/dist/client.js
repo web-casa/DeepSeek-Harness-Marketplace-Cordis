@@ -28,17 +28,21 @@ function createMarketApi({ fetchImpl = globalThis.fetch, base = "" } = {}) {
   }
   async function mutation(path, body) {
     if (!token) await session();
-    const res = await fetchImpl(`${base}${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-cordis-mp-token": token },
-      body: JSON.stringify(body)
-    });
-    if (res.status === 403) {
-      token = null;
-      await session();
-      return mutation(path, body);
+    let retried = false;
+    for (; ; ) {
+      const res = await fetchImpl(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-cordis-mp-token": token },
+        body: JSON.stringify(body)
+      });
+      if (res.status === 403 && !retried) {
+        retried = true;
+        token = null;
+        await session();
+        continue;
+      }
+      return json(res);
     }
-    return json(res);
   }
   return {
     session,

@@ -16,24 +16,27 @@ function loadSnapshot() {
   catch { return null }
 }
 
-function profileDir() {
-  if (process.env.CORDIS_MP_PROFILE_DIR) return process.env.CORDIS_MP_PROFILE_DIR
-  const home = process.env.DSH_HOME || join(process.env.HOME || '.', '.dsh')
-  return join(home, 'profiles', process.env.CORDIS_MP_PROFILE || 'web')
+export function createRuntime({ dir = null, baseUrl = null, dshHome = null, profile = null } = {}) {
+  const resolvedDir = dir || (() => {
+    if (process.env.CORDIS_MP_PROFILE_DIR) return process.env.CORDIS_MP_PROFILE_DIR
+    const home = dshHome || process.env.DSH_HOME || join(process.env.HOME || '.', '.dsh')
+    return join(home, 'profiles', profile || process.env.CORDIS_MP_PROFILE || 'web')
+  })()
+  const base = (baseUrl || process.env.CORDIS_RUN_API || 'https://cordis.run/api/v1').replace(/\/+$/, '')
+  const catalog = new CatalogClient({ baseUrl: base, snapshot: loadSnapshot() })
+  const runner = new DshRunner({ dshHome: dshHome ?? process.env.DSH_HOME, profile: profile ?? process.env.CORDIS_MP_PROFILE ?? 'web' })
+  const packageManager = new DshPackageManagerPort({ runner, profileDir: resolvedDir })
+  const journal = new Journal({ journalRoot: join(resolvedDir, '.cordis-mp'), profileRoot: resolvedDir })
+  const activation = new DshActivationPort({ patchPath: join(resolvedDir, 'cordis.patch.yml') })
+  const inspect = new HttpArtifactInspector({ cacheDir: join(resolvedDir, '.cordis-mp', 'artifacts') })
+  const installService = new InstallService({ catalog, journal, packageManager, activation, inspect, pendingPath: join(resolvedDir, '.cordis-mp') })
+  return { dir: resolvedDir, base, catalog, journal, packageManager, activation, inspect, installService }
 }
 
 export function apply(ctx) {
   ctx.inject(['webServer'], (hostCtx) => {
     const webServer = hostCtx.webServer
-    const base = (process.env.CORDIS_RUN_API || 'https://cordis.run/api/v1').replace(/\/+$/, '')
-    const catalog = new CatalogClient({ baseUrl: base, snapshot: loadSnapshot() })
-    const dir = profileDir()
-    const runner = new DshRunner({ dshHome: process.env.DSH_HOME, profile: process.env.CORDIS_MP_PROFILE || 'web' })
-    const packageManager = new DshPackageManagerPort({ runner, profileDir: dir })
-    const journal = new Journal({ journalRoot: join(dir, '.cordis-mp'), profileRoot: dir })
-    const activation = new DshActivationPort({ patchPath: join(dir, 'cordis.patch.yml') })
-    const inspect = new HttpArtifactInspector({ cacheDir: join(dir, '.cordis-mp', 'artifacts') })
-    const installService = new InstallService({ catalog, journal, packageManager, activation, inspect, pendingPath: join(dir, '.cordis-mp') })
+    const { installService, catalog } = createRuntime()
     const guard = new MutationGuard()
     hostCtx.effect(() => {
       const a = mountCatalogRoutes(webServer, catalog)

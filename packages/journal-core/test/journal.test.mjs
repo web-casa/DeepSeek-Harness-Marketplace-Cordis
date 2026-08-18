@@ -221,3 +221,11 @@ test('begin rejects empty targets', async ()=>{
   const {j}=make()
   await assert.rejects(()=>j.begin([]), e=>e.code==='BAD_TARGETS')
 })
+
+test('commit allows tracked-but-unchanged no-op targets', async ()=>{
+  const {j,profile}=make()
+  const tx=await j.begin(['package.json','cordis.patch.yml'])
+  await j.writePresent(tx,'package.json',Buffer.from('A1'))
+  await j.commitFiles(tx)
+  assert.equal(readFileSync(join(profile,'package.json'),'utf8'),'A1')
+})

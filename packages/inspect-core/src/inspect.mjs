@@ -25,30 +25,36 @@ export function inspectDir(dir) {
 }
 
 export async function inspectTarball(file, { maxEntryBytes = 4 * 1024 * 1024, maxEntries = 4096 } = {}) {
-  let pkgText = null, patchText = null, entries = 0
+  let pkgText = null, patchText = null, entries = 0, fail = null
   const badPath = /(^|\/)\.\.(\/|$)|^\/|\\/
   await t({
     file,
     onReadEntry(entry) {
-      entries++
-      if (entries > maxEntries) throw new InspectError('TOO_MANY_ENTRIES', 'tar has too many entries')
-      if (badPath.test(entry.path)) throw new InspectError('BAD_PATH', 'unsafe tar path: ' + entry.path)
-      const size = Number(entry.size || 0)
-      if (size > maxEntryBytes) throw new InspectError('ENTRY_TOO_LARGE', 'tar entry too large: ' + entry.path)
+      if (fail) return
+      try {
+        entries++
+        if (entries > maxEntries) { fail = new InspectError('TOO_MANY_ENTRIES', 'tar has too many entries'); return }
+        if (badPath.test(entry.path)) { fail = new InspectError('BAD_PATH', 'unsafe tar path: ' + entry.path); return }
+        const size = Number(entry.size || 0)
+        if (size > maxEntryBytes) { fail = new InspectError('ENTRY_TOO_LARGE', 'tar entry too large: ' + entry.path); return }
+      } catch (e) { fail = e; return }
       const wanted = entry.path === 'package/package.json' || entry.path === 'package/cordis.patch.yml'
       if (!wanted) return
       const chunks = []
       entry.on('data', c => {
+        if (fail) return
         chunks.push(c)
-        if (chunks.reduce((n, b) => n + b.length, 0) > maxEntryBytes) throw new InspectError('ENTRY_TOO_LARGE', 'entry exceeded limit while reading')
+        if (chunks.reduce((n, b) => n + b.length, 0) > maxEntryBytes) fail = new InspectError('ENTRY_TOO_LARGE', 'entry exceeded limit while reading')
       })
       entry.on('end', () => {
+        if (fail) return
         const text = Buffer.concat(chunks).toString('utf8')
         if (entry.path === 'package/package.json') pkgText = text
         else patchText = text
       })
     },
   })
+  if (fail) throw fail
   if (!pkgText) throw new InspectError('BAD_MANIFEST', 'package/package.json not found in tarball')
   let pkg
   try { pkg = JSON.parse(pkgText) } catch { throw new InspectError('BAD_MANIFEST', 'package.json is invalid JSON') }
