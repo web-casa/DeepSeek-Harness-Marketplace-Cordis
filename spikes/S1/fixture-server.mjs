@@ -8,7 +8,7 @@ const data = JSON.parse(readFileSync(new URL('./fixture-data.json', import.meta.
 const ETAG = '"cordis-fixture-v1"'
 
 // 1x1 红色 PNG，用于 market_image 联调
-const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z9xkAAAAASUVORK5CYII='
+const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC'
 const PNG = Buffer.from(PNG_BASE64, 'base64')
 
 const server = createServer((req, res) => {
@@ -21,10 +21,19 @@ const server = createServer((req, res) => {
   if (path === '/api/v1/plugins') {
     const platform = url.searchParams.get('platform')
     const q = (url.searchParams.get('q') || '').toLowerCase()
+    const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10) || 1)
+    const perPage = Math.min(100, Math.max(1, parseInt(url.searchParams.get('per_page') || url.searchParams.get('limit') || '50', 10) || 50))
+    const sort = url.searchParams.get('sort') || 'stars'
+    const order = url.searchParams.get('order') || 'desc'
     let items = data.items
     if (platform) items = items.filter(i => (i.platforms || []).includes(platform))
     if (q) items = items.filter(i => i.slug.toLowerCase().includes(q) || i.name.toLowerCase().includes(q))
-    json(200, { ...data, page: { ...data.page, hasMore: false, limit: items.length }, count: items.length, items })
+    const cmp = sort === 'added' ? (a,b)=>String(a.added||'').localeCompare(String(b.added||'')) : (a,b)=>((a.stars||0)-(b.stars||0))
+    items = items.sort(cmp); if (order === 'desc') items = items.reverse()
+    const total = items.length
+    const start = (page - 1) * perPage
+    const slice = items.slice(start, start + perPage)
+    json(200, { ...data, count: total, page: { cursor: String(page), hasMore: start + perPage < total, limit: perPage }, items: slice })
     return
   }
   if (path.startsWith('/api/v1/plugins/')) {

@@ -20,6 +20,9 @@
 GET /plugins?q=&category=&platform=&sort=stars|added&order=desc|asc&cursor=&limit=
 ```
 - `platform`：`web` / `desktop` / 缺省（返回全部，由客户端过滤）。
+- 分页以 `page` 对象返回：`{ cursor, hasMore, limit }`；顶部 `count` 为过滤后总数。
+- 过渡兼容：服务端/夹具**接受** `page` / `per_page` 查询参数（等价于
+  `cursor` / `limit`），但响应保持 `count + page` 对象，不再平铺 `total/page/per_page`。
 - 响应 200：
 ```json
 {
@@ -96,19 +99,25 @@ GET /plugins/{slug}?fields=versions,blocked,entryRevision
 ```
 或客户端直接复用列表；版本级 `blocked` 必须可查。
 
-## 4. 预设下载（已存在，需调整重定向策略）
-当前实际：
-```
-GET https://cordis.run/api/presets/code/download
-302 -> https://statics.xlayers.dev/presets/official/code.dshpreset
-```
-建议二选一：
-- A（推荐）：cordis.run 直出或反代，最终响应 host 仍为 cordis.run；
-- B：客户端改为“初始 host 白名单 + 逐跳重定向白名单”：
-  `https://cordis.run` → `https://statics.xlayers.dev`，最多 3 跳、仅 https、
-  禁跨 host 传递凭据、下载后仍需大小/zip 校验。
+## 4. 预设下载（最终决定：方案 A）
+最终决策：**cordis.run 直出/反代 preset，禁止 302 到 CDN/对象存储**。
+桌面端 deep-link 当前实现：
+- 仅接受 `https://cordis.run/api/presets/<slug>/download`；
+- `reqwest::redirect::Policy::none()`，不跟随重定向。
+因此 cordis.run 后端必须让该 URL 直接返回 `200 application/zip`，最终响应
+host 仍为 `cordis.run`。当前 `302 -> statics.xlayers.dev` 行为必须改造。
 
-## 5. 联调验收清单
+## 5. 桌面端 DTO 迁移要求（已确认）
+桌面当前为平铺 `npm/version`、`description: String`、`page/total/per_page: u32`。
+按本轮结论，桌面需改为：
+- 解析嵌套 `source: { type, packageName, version, integrity, registry, tarball }`
+  （同时可保留 `npm/version` 作为 deprecated 兼容字段，但不作为安装依据）；
+- `description: { zh, en }` 或 `Option<LocalizedText>`；
+- 搜索响应解析 `count: u32` + `page: { cursor, hasMore, limit }`；
+- 404 建议解析 `{ error: { code, message } }` 并透出 `message`；
+- 桌面仍发送 `page` / `per_page` 查询参数可以，fixture 已兼容。
+
+## 6. 联调验收清单
 - [ ] 列表：`platform=web` / `platform=desktop` / 无 platform 三种返回正确
 - [ ] 搜索 q、分类、排序、cursor 分页
 - [ ] 详情 slug 404 时返回 JSON 错误，不是 Next.js HTML
