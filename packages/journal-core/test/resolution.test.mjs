@@ -4,18 +4,19 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { Journal, ResolutionJournal, fingerprint, createValidationEvidence } from '../src/index.js'
+import { Journal, ResolutionJournal, fingerprint } from '../src/index.js'
 import { fileState } from '../src/state.mjs'
 
-function make(){
+function make(opts={}){
   const base=mkdtempSync(join(tmpdir(),'res-'))
   const profile=join(base,'profile'); const root=join(base,'meta')
   mkdirSync(profile,{recursive:true})
   writeFileSync(join(profile,'package.json'),'A0'); writeFileSync(join(profile,'pnpm-lock.yaml'),'B0')
   const j=new Journal({journalRoot:root, profileRoot:profile})
-  const r=new ResolutionJournal(j)
+  const r=new ResolutionJournal(j, opts)
   return {base,profile,root,j,r}
 }
+const okValidator={ validateCurrentProfile: async ()=>({ok:true}) }
 async function conflictedTx(ctx){
   const tx=await ctx.j.begin(['package.json','pnpm-lock.yaml'])
   await ctx.j.writePresent(tx,'package.json',Buffer.from('A1'))
@@ -70,11 +71,9 @@ test('external edit after plan -> conflict for that target only', async ()=>{
 })
 
 test('accept-current with validation evidence', async ()=>{
-  const c=make(); const tx=await conflictedTx(c)
+  const c=make({baselineValidator:okValidator}); const tx=await conflictedTx(c)
   const rid=await c.r.beginResolution({tx, action:'accept-current'})
-  const states={}
-  for(const rel of Object.keys(c.j.getBaseline(tx))) states[rel]=fileState(join(c.profile,rel))
-  await c.r.recordValidation(rid,createValidationEvidence({ok:true}, fingerprint(states)))
+  await c.r.validateAndRecord(rid)
   const out=await c.r.completeResolution(rid)
   assert.equal(out.outcome,'ACCEPTED_CURRENT')
   // profile 不被修改
@@ -82,12 +81,10 @@ test('accept-current with validation evidence', async ()=>{
 })
 
 test('validation once-only and fingerprint mismatch', async ()=>{
-  const c=make(); const tx=await conflictedTx(c)
+  const c=make({baselineValidator:okValidator}); const tx=await conflictedTx(c)
   const rid=await c.r.beginResolution({tx, action:'accept-current'})
-  const states={}
-  for(const rel of Object.keys(c.j.getBaseline(tx))) states[rel]=fileState(join(c.profile,rel))
-  await c.r.recordValidation(rid,createValidationEvidence({ok:true}, fingerprint(states)))
-  await assert.rejects(()=>c.r.recordValidation(rid,createValidationEvidence({ok:true}, fingerprint(states))), e=>e.code==='JOURNALLED')
+  await c.r.validateAndRecord(rid)
+  await assert.rejects(()=>c.r.validateAndRecord(rid), e=>e.code==='JOURNALLED')
   writeFileSync(join(c.profile,'package.json'),'X2')
   assert.equal((await c.r.completeResolution(rid)).outcome,'RESOLUTION_CONFLICTED')
 })
@@ -164,12 +161,14 @@ test('completeResolution is once-only', async ()=>{
   await assert.rejects(()=>c.r.completeResolution(rid), e=>e.code==='JOURNALLED')
 })
 
-test('plain object cannot pass as validation evidence', async ()=>{
+test('validator is required and internal (G5)', async ()=>{
   const c=make(); const tx=await conflictedTx(c)
   const rid=await c.r.beginResolution({tx, action:'accept-current'})
-  const states={}
-  for(const rel of Object.keys(c.j.getBaseline(tx))) states[rel]=fileState(join(c.profile,rel))
-  await assert.rejects(()=>c.r.recordValidation(rid,{valid:true,fingerprint:fingerprint(states),baselineReport:{ok:true}}), e=>e.code==='BAD_EVIDENCE')
+  await assert.rejects(()=>c.r.validateAndRecord(rid), e=>e.code==='NO_VALIDATOR')
+  const bad=make({ baselineValidator:{ validateCurrentProfile: async ()=>({ok:false}) } })
+  const tx2=await conflictedTx(bad)
+  const rid2=await bad.r.beginResolution({tx:tx2, action:'accept-current'})
+  await assert.rejects(()=>bad.r.validateAndRecord(rid2), e=>e.code==='BAD_VALIDATION')
 })
 
 test('recover() finishes partial restore and cleans terminal', async ()=>{
@@ -185,11 +184,9 @@ test('recover() finishes partial restore and cleans terminal', async ()=>{
 })
 
 test('recover() completes validated accept-current', async ()=>{
-  const c=make(); const tx=await conflictedTx(c)
+  const c=make({baselineValidator:okValidator}); const tx=await conflictedTx(c)
   const rid=await c.r.beginResolution({tx, action:'accept-current'})
-  const states={}
-  for(const rel of Object.keys(c.j.getBaseline(tx))) states[rel]=fileState(join(c.profile,rel))
-  await c.r.recordValidation(rid,createValidationEvidence({ok:true}, fingerprint(states)))
+  await c.r.validateAndRecord(rid)
   const r2=new ResolutionJournal(new Journal({journalRoot:c.root, profileRoot:c.profile}))
   const report=await r2.recover()
   assert.equal(report[0].result,'ACCEPTED_CURRENT')

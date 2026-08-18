@@ -14,12 +14,12 @@
 | G2 祖先清理 | **CLOSED** | 三连链第一祖先 tombstone 崩溃后 recover 断链续清理，最终 resolutions 空 |
 | G3 普通恢复 | **CLOSED** | reducer 物理顺序/链校验统一；COMMITTED/ROLLED_BACK/终检；failpoint+子进程矩阵 |
 | G4 锁 | **CLOSED (FULL)** | 目录锁 mkdir 排他、heartbeat 自有目录、takeover rename CAS、fencing、Linux start ticks；Windows BEST_EFFORT |
-| G5 validation gate | PARTIAL | Symbol ticket + once-only + fingerprint；恶意进程内调用不在威胁模型 |
-| G6 测试矩阵自包含 | PARTIAL | 公开 API 生成的 13 场景子进程 crash 矩阵；仍未逐点穷举全部 durable 边界 |
-| G7 schema 完整 | PARTIAL | FileState/baseline/manifest/outcome/report/resolution/validation 已集中校验；恢复报告等内存结构未版本化 |
+| G5 validation gate | **CLOSED** | validator 由 ResolutionJournal 内部持有并调用，外部无法传入 evidence |
+| G6 测试矩阵自包含 | PARTIAL | 公开 API 生成的 17 场景子进程 crash 矩阵；仍未逐点穷举全部 durable 边界 |
+| G7 schema 完整 | **CLOSED** | 持久化文件集中校验；RecoveryReport / ResolutionOutcome 版本化并接入 |
 | G8 target durable | PARTIAL | replace/unlink 各边界 failpoint + 部分 kill 矩阵；marker/outcome/tombstone 部分覆盖 |
 | G9 conflict evidence | **CLOSED** | evidence-manifest hash/length + report once-only + 恢复校验 + BAD_EVIDENCE |
-| G10 故障注入闭环 | PARTIAL | deterministic failpoint + 13 场景子进程 exit；kill -9 全边界仍未穷举 |
+| G10 故障注入闭环 | PARTIAL | deterministic failpoint + 17 场景子进程 exit；kill -9 全边界仍未穷举 |
 
 ## 测试
 - 66 tests / 66 pass

@@ -64,3 +64,31 @@ export function validateValidation(v) {
   if (!v || v.v !== 1 || typeof v.resolutionId !== 'string' || v.valid !== true || typeof v.fingerprint !== 'string') throw new Error('validation invalid')
   return v
 }
+
+const RESULT_ENUM = ['CLEAN','COMMITTED_OK','ROLLED_BACK','CONFLICTED','CONFLICTED_EXISTING',
+  'BAD_MANIFEST','BAD_OUTCOME','BAD_REPORT','BAD_EVIDENCE','SNAPSHOT_MISSING','SNAPSHOT_BAD',
+  'BAD_OP','ACTIVE_TX','RESOLVED','RESOLUTION_CONFLICTED','ACCEPTED_CURRENT','SUPERSEDED',
+  'WAITING_AUTHORIZATION','WAITING_VALIDATION','CLEANED_TERMINAL','CLEANED_SUPERSEDED','NO_HEAD']
+
+export function makeRecoveryReport(entries) {
+  const report = { v: 1, entries }
+  validateRecoveryReport(report)
+  return report
+}
+export function validateRecoveryReport(r) {
+  if (!r || r.v !== 1 || !Array.isArray(r.entries)) throw new Error('recovery report invalid')
+  for (const e of r.entries) {
+    if (!e || typeof e.txid !== 'string' || !RESULT_ENUM.includes(e.result)) throw new Error('recovery report entry invalid')
+  }
+  return r
+}
+export function makeResolutionOutcome(resolutionId, txid, outcome) {
+  const o = { v: 1, resolutionId, txid, outcome }
+  validateResolutionOutcome(o)
+  return o
+}
+export function validateResolutionOutcome(o) {
+  if (!o || o.v !== 1 || typeof o.resolutionId !== 'string' || typeof o.txid !== 'string') throw new Error('resolution outcome header invalid')
+  if (!['RESOLVED','RESOLUTION_CONFLICTED','ACCEPTED_CURRENT','SUPERSEDED'].includes(o.outcome)) throw new Error('resolution outcome enum invalid')
+  return o
+}

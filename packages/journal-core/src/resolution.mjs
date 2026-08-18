@@ -4,13 +4,13 @@ import { randomBytes } from 'node:crypto'
 import { atomicFile, marker, replaceTarget, unlinkTargetDurable, readJsonIfExists, tombstone, fsyncDir } from './durable.mjs'
 import { fileState, fingerprint, targetKey, sha256 } from './state.mjs'
 import { JournalError } from './journal.mjs'
-import { validateResolutionManifest, validateValidation } from './schema.mjs'
-import { isValidationEvidence } from './validation.mjs'
+import { validateResolutionManifest, validateValidation, makeRecoveryReport, makeResolutionOutcome } from './schema.mjs'
+import { createValidationEvidence } from './validation.mjs'
 
 export class ResolutionError extends JournalError {}
 
 export class ResolutionJournal {
-  constructor(journal, { lock = null } = {}) { this.journal = journal; this.root = journal.root; this.profile = journal.profile; this.dir = join(this.root,'resolutions'); this.lock = lock }
+  constructor(journal, { lock = null, baselineValidator = null } = {}) { this.journal = journal; this.root = journal.root; this.profile = journal.profile; this.dir = join(this.root,'resolutions'); this.lock = lock; this.baselineValidator = baselineValidator }
 
   #dir(rid){ return join(this.dir, rid) }
   #manifest(rid){ const raw=readJsonIfExists(join(this.#dir(rid),'manifest.json')); if(!raw) throw new ResolutionError('NO_MANIFEST','resolution manifest missing: '+rid)
@@ -131,16 +131,17 @@ export class ResolutionJournal {
     return 'DONE'
   }
 
-  async recordValidation(rid, evidence){
+  // G5：validator 由 ResolutionJournal 持有并内部调用；不再接受外部构造的 evidence。
+  async validateAndRecord(rid){
     this.lock?.fence()
     const m=this.#manifest(rid)
-    if(m.action!=='accept-current') throw new ResolutionError('BAD_ACTION','recordValidation only for accept-current')
-    if(!isValidationEvidence(evidence)) throw new ResolutionError('BAD_EVIDENCE','evidence must be a ValidationEvidence ticket')
-    if(evidence.valid!==true) throw new ResolutionError('BAD_EVIDENCE','evidence.valid must be true')
-    if(evidence.baselineReport?.ok!==true) throw new ResolutionError('BAD_EVIDENCE','evidence.baselineReport.ok must be true')
+    if(m.action!=='accept-current') throw new ResolutionError('BAD_ACTION','validateAndRecord only for accept-current')
+    if(typeof this.baselineValidator?.validateCurrentProfile !== 'function') throw new ResolutionError('NO_VALIDATOR','baselineValidator is not configured')
+    const report=await this.baselineValidator.validateCurrentProfile()
+    if(!report || report.ok!==true) throw new ResolutionError('BAD_VALIDATION','baseline validation did not pass')
     const currentFp=this.#currentFingerprint(m.txid)
-    if(evidence.fingerprint!==currentFp) throw new ResolutionError('FINGERPRINT_MISMATCH','current fingerprint does not match evidence')
-    try{ atomicFile(this.#validationPath(rid), JSON.stringify({v:1,resolutionId:rid,valid:true,fingerprint:currentFp,baselineReport:evidence.baselineReport,createdAt:Date.now()},null,2), {mode:0o600, exclusive:true}) }
+    const evidence=createValidationEvidence(report, currentFp)
+    try{ atomicFile(this.#validationPath(rid), JSON.stringify({v:1,resolutionId:rid,valid:true,fingerprint:currentFp,baselineReport:report,createdAt:Date.now()},null,2), {mode:0o600, exclusive:true}) }
     catch(e){ if(e.code==='EEXIST') throw new ResolutionError('JOURNALLED','validation already recorded'); throw e }
   }
 
@@ -160,11 +161,11 @@ export class ResolutionJournal {
       for(const [rel,plan] of Object.entries(m.plan)){
         const cur=fileState(join(this.profile,rel))
         if(cur.exists!==plan.next.exists || cur.hash!==plan.next.hash){
-          atomicFile(this.#outcomePath(rid), JSON.stringify({v:1,resolutionId:rid,outcome:'RESOLUTION_CONFLICTED'}), {mode:0o600})
+          atomicFile(this.#outcomePath(rid), JSON.stringify(makeResolutionOutcome(rid,m.txid,'RESOLUTION_CONFLICTED')), {mode:0o600})
           return {outcome:'RESOLUTION_CONFLICTED'}
         }
       }
-      atomicFile(this.#outcomePath(rid), JSON.stringify({v:1,resolutionId:rid,outcome:'RESOLVED'}), {mode:0o600})
+      atomicFile(this.#outcomePath(rid), JSON.stringify(makeResolutionOutcome(rid,m.txid,'RESOLVED')), {mode:0o600})
       return {outcome:'RESOLVED'}
     }
     if(m.action==='accept-current'){
@@ -172,8 +173,8 @@ export class ResolutionJournal {
       try { val=readJsonIfExists(this.#validationPath(rid)); if(val) validateValidation(val) } catch(e) { throw new ResolutionError('BAD_VALIDATION', e.message) }
       if(!val || val.valid!==true) throw new ResolutionError('NO_VALIDATION','no validation evidence')
       const fp=this.#currentFingerprint(m.txid)
-      if(fp!==val.fingerprint){ atomicFile(this.#outcomePath(rid), JSON.stringify({v:1,resolutionId:rid,outcome:'RESOLUTION_CONFLICTED'}), {mode:0o600}); return {outcome:'RESOLUTION_CONFLICTED'} }
-      atomicFile(this.#outcomePath(rid), JSON.stringify({v:1,resolutionId:rid,outcome:'ACCEPTED_CURRENT'}), {mode:0o600})
+      if(fp!==val.fingerprint){ atomicFile(this.#outcomePath(rid), JSON.stringify(makeResolutionOutcome(rid,m.txid,'RESOLUTION_CONFLICTED')), {mode:0o600}); return {outcome:'RESOLUTION_CONFLICTED'} }
+      atomicFile(this.#outcomePath(rid), JSON.stringify(makeResolutionOutcome(rid,m.txid,'ACCEPTED_CURRENT')), {mode:0o600})
       return {outcome:'ACCEPTED_CURRENT'}
     }
     throw new ResolutionError('BAD_ACTION','unknown action')
@@ -182,10 +183,12 @@ export class ResolutionJournal {
 
   async markConflicted(rid){
     const m=this.#manifest(rid)
-    atomicFile(this.#outcomePath(rid), JSON.stringify({v:1,resolutionId:rid,txid:m.txid,outcome:'RESOLUTION_CONFLICTED'}), {mode:0o600})
+    atomicFile(this.#outcomePath(rid), JSON.stringify(makeResolutionOutcome(rid,m.txid,'RESOLUTION_CONFLICTED')), {mode:0o600})
   }
 
-  async recover(){
+  async recoverReport(){ return makeRecoveryReport(await this.#recoverEntries()) }
+  async recover(){ return this.#recoverEntries() }
+  async #recoverEntries(){
     const report=[]
     let list
     try { list=this.list() } catch(e){ return [{result:e.code}] }

@@ -5,7 +5,7 @@ import { atomicFile, appendRecord, marker, replaceTarget, unlinkTargetDurable, r
 import { sweepLockDebris } from './lock.mjs'
 import { fileState, targetKey, sha256, modeOf } from './state.mjs'
 import { parseOpLog, reduceOps, classifyTarget } from './reducer.mjs'
-import { validateManifest, validateOutcome, validateConflictReport } from './schema.mjs'
+import { validateManifest, validateOutcome, validateConflictReport, makeRecoveryReport } from './schema.mjs'
 
 const ALLOWED = new Set(['package.json','pnpm-lock.yaml','cordis.patch.yml','.cordis-mp/state.json'])
 
@@ -156,7 +156,9 @@ export class Journal {
     }
   }
 
-  async recover(){
+  async recoverReport(){ return makeRecoveryReport(await this.#recoverEntries()) }
+  async recover(){ return this.#recoverEntries() }
+  async #recoverEntries(){
     sweepLockDebris(this.root)
     sweepTrash(this.root)
     const scan=this.scan(); const report=[]

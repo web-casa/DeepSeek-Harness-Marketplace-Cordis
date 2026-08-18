@@ -76,6 +76,38 @@ if (scenario === 'unlink-before') {
   setFailpoint('unlinkTarget:before', ({ path }) => { if (path.endsWith('package.json')) { console.log('CRASH '+scenario); process.exit(43) } })
   await j.deleteTarget(tx, 'package.json')
 }
+if (scenario === 'unlink-after-dirfsync') {
+  const tx = await j.begin(['package.json'])
+  setFailpoint('unlinkTarget:after-dirfsync', ({ path }) => { if (path.endsWith('package.json')) { console.log('CRASH '+scenario); process.exit(43) } })
+  await j.deleteTarget(tx, 'package.json')
+}
+if (scenario === 'manifest-after-publish') {
+  setFailpoint('atomicFile:after-publish', ({ path }) => { if (path.includes('/journal/') && path.endsWith('manifest.json')) { console.log('CRASH '+scenario); process.exit(43) } })
+  await j.begin(['package.json'])
+}
+if (scenario === 'validation-after-publish') {
+  const tx = await j.begin(['package.json'])
+  await j.writePresent(tx, 'package.json', Buffer.from('A1'))
+  writeFileSync(join(profile,'package.json'),'X')
+  await j.recover()
+  const r = new ResolutionJournal(j, { baselineValidator: { validateCurrentProfile: async ()=>({ok:true}) } })
+  const rid = await r.beginResolution({ tx, action:'accept-current' })
+  setFailpoint('atomicFile:after-publish', ({ path }) => { if (path.endsWith('validation.json')) { console.log('CRASH '+scenario); process.exit(43) } })
+  await r.validateAndRecord(rid)
+}
+if (scenario === 'resolution-confirmed-after-publish') {
+  const tx = await j.begin(['package.json'])
+  await j.writePresent(tx, 'package.json', Buffer.from('A1'))
+  writeFileSync(join(profile,'package.json'),'X')
+  await j.recover()
+  const r = new ResolutionJournal(j)
+  const baseline = j.getBaseline(tx)
+  const xhash='sha256:'+createHash('sha256').update('X').digest('hex')
+  const plan = { 'package.json': { expected:{exists:true,hash:xhash}, next: baseline['package.json'].state } }
+  const rid = await r.beginResolution({ tx, action:'restore-snapshot', plan })
+  setFailpoint('atomicFile:after-publish', ({ path }) => { if (path.includes('/confirmed/')) { console.log('CRASH '+scenario); process.exit(43) } })
+  await r.resolveTarget(rid, 'package.json')
+}
 if (scenario === 'supersede-after-new-manifest') {
   const tx = await j.begin(['package.json'])
   await j.writePresent(tx, 'package.json', Buffer.from('A1'))

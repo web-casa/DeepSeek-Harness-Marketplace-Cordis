@@ -209,3 +209,10 @@ test('delete absent target rejected before writing op', async ()=>{
   const lines=readFileSync(ops,'utf8').trim().split('\n')
   assert.equal(lines.length,2) // 原 delete 的 INTENDED+CONFIRMED，未新增
 })
+
+test('recoverReport returns versioned schema', async ()=>{
+  const {j}=make()
+  const report=await j.recoverReport()
+  assert.equal(report.v,1)
+  assert.ok(Array.isArray(report.entries))
+})
