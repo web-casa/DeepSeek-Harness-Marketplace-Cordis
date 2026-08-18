@@ -14,7 +14,8 @@
     "@cordis-mp/dsh-runner": "workspace:*",
     "@cordis-mp/install-core": "workspace:*",
     "@cordis-mp/journal-core": "workspace:*",
-    "@cordis-mp/web-harness": "workspace:*"
+    "@cordis-mp/web-harness": "workspace:*",
+    "@cordis-mp/inspect-core": "workspace:*"
   },
   "dsh": {
     "bundle": {

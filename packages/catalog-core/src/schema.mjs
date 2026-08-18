@@ -63,6 +63,7 @@ export function validateCatalogItem(item) {
     deprecated: item.deprecated === true,
     replacementSlug: typeof item.replacementSlug === 'string' ? item.replacementSlug : null,
     entryRevision: typeof item.entryRevision === 'string' ? item.entryRevision : null,
+    entryIds: Array.isArray(item.entryIds) ? item.entryIds.filter(x => typeof x === 'string') : [],
     installHint: typeof item.installHint === 'string' ? item.installHint : null,
     source,
   }

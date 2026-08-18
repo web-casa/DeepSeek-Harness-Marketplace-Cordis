@@ -10,5 +10,8 @@
   "scripts": {
     "test": "pnpm -r test",
     "smoke": "node scripts/host-smoke.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

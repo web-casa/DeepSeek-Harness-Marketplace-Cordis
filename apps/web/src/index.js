@@ -6,6 +6,7 @@ import { mountCatalogRoutes, mountMutationRoutes, mountSessionRoute, MutationGua
 import { DshRunner, DshPackageManagerPort, DshActivationPort } from '@cordis-mp/dsh-runner'
 import { Journal } from '@cordis-mp/journal-core'
 import { InstallService } from '@cordis-mp/install-core'
+import { HttpArtifactInspector } from '@cordis-mp/inspect-core'
 
 export const name = 'cordis-mp'
 export const inject = ['webServer']
@@ -31,7 +32,8 @@ export function apply(ctx) {
     const packageManager = new DshPackageManagerPort({ runner, profileDir: dir })
     const journal = new Journal({ journalRoot: join(dir, '.cordis-mp'), profileRoot: dir })
     const activation = new DshActivationPort({ patchPath: join(dir, 'cordis.patch.yml') })
-    const installService = new InstallService({ catalog, journal, packageManager, activation })
+    const inspect = new HttpArtifactInspector({ cacheDir: join(dir, '.cordis-mp', 'artifacts') })
+    const installService = new InstallService({ catalog, journal, packageManager, activation, inspect, pendingPath: join(dir, '.cordis-mp') })
     const guard = new MutationGuard()
     hostCtx.effect(() => {
       const a = mountCatalogRoutes(webServer, catalog)

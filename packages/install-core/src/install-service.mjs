@@ -33,10 +33,12 @@ export class InstallService {
       tarball: fresh.source.tarball,
       registry: fresh.source.registry,
     }
-    // R1：安装前 INSPECT 解析 entryIds（tarball/目录）。
+    // R1：安装前 INSPECT 解析 entryIds（tarball/目录）；catalog entryIds 作为兜底。
     if (this.inspect) {
       const inspected = await this.inspect.inspectArtifact(artifact)
-      artifact.entryIds = inspected?.entryIds || []
+      artifact.entryIds = inspected?.entryIds || fresh.entryIds || []
+    } else {
+      artifact.entryIds = fresh.entryIds || []
     }
     // M2b：PRE_DISABLE 在安装前执行；失败时撤销。
     let disable = null
