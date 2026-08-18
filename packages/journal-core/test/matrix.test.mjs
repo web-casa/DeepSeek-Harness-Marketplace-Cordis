@@ -19,6 +19,12 @@ function crash(scenario, ctx){
     c.on('close',code=>resolve(code))
   })
 }
+function crashRaw(scenario, ctx){
+  return new Promise(resolve=>{
+    const c=spawn(process.execPath,[helper,scenario,ctx.profile,ctx.root],{stdio:['ignore','pipe','pipe']})
+    c.on('close',(code,signal)=>resolve({code,signal}))
+  })
+}
 
 test('matrix: forward crash after rename -> rollback A0', async ()=>{
   const c=setup(); assert.equal(await crash('forward-after-rename',c),43)
@@ -110,6 +116,77 @@ test('matrix: confirmed marker crash after publish -> recover resolves', async (
   const report=await new ResolutionJournal(j).recover()
   assert.equal(report[0].result,'RESOLVED')
   assert.equal(readFileSync(join(c.profile,'package.json'),'utf8'),'A0')
+})
+test('matrix: replace crash before -> idempotent rollback', async ()=>{
+  const c=setup(); assert.equal(await crash('replace-before',c),43)
+  const j=new Journal({journalRoot:c.root,profileRoot:c.profile})
+  assert.equal((await j.recover())[0].result,'ROLLED_BACK')
+  assert.equal(readFileSync(join(c.profile,'package.json'),'utf8'),'A0')
+})
+test('matrix: replace crash after write before fsync -> rollback', async ()=>{
+  const c=setup(); assert.equal(await crash('replace-after-write',c),43)
+  const j=new Journal({journalRoot:c.root,profileRoot:c.profile})
+  assert.equal((await j.recover())[0].result,'ROLLED_BACK')
+  assert.equal(readFileSync(join(c.profile,'package.json'),'utf8'),'A0')
+})
+test('matrix: append crash after dirfsync -> idempotent rollback', async ()=>{
+  const c=setup(); assert.equal(await crash('append-after-dirfsync',c),43)
+  const j=new Journal({journalRoot:c.root,profileRoot:c.profile})
+  assert.equal((await j.recover())[0].result,'ROLLED_BACK')
+  assert.equal(readFileSync(join(c.profile,'package.json'),'utf8'),'A0')
+})
+test('matrix: SIGKILL after rename -> recovery rolls back', async ()=>{
+  const c=setup(); const raw=await crashRaw('kill9-forward-after-rename',c)
+  assert.equal(raw.signal,'SIGKILL')
+  const j=new Journal({journalRoot:c.root,profileRoot:c.profile})
+  assert.equal((await j.recover())[0].result,'ROLLED_BACK')
+  assert.equal(readFileSync(join(c.profile,'package.json'),'utf8'),'A0')
+})
+test('matrix: tombstone crash after src fsync -> sweep cleans', async ()=>{
+  const c=setup(); assert.equal(await crash('tombstone-after-src-fsync',c),43)
+  const j=new Journal({journalRoot:c.root,profileRoot:c.profile})
+  await j.recover()
+  assert.equal(j.scan().txs.length,0)
+})
+
+test('matrix: atomicFile before manifest -> NO_MANIFEST', async ()=>{
+  const c=setup(); assert.equal(await crash('atom-before',c),43)
+  const j=new Journal({journalRoot:c.root,profileRoot:c.profile})
+  assert.equal((await j.recover())[0].result,'NO_MANIFEST')
+  assert.equal(readFileSync(join(c.profile,'package.json'),'utf8'),'A0')
+})
+test('matrix: atomicFile after-write manifest -> NO_MANIFEST', async ()=>{
+  const c=setup(); assert.equal(await crash('atom-after-write',c),43)
+  const j=new Journal({journalRoot:c.root,profileRoot:c.profile})
+  assert.equal((await j.recover())[0].result,'NO_MANIFEST')
+})
+test('matrix: atomicFile before-dirfsync manifest -> rollback idempotent', async ()=>{
+  const c=setup(); assert.equal(await crash('atom-before-dirfsync',c),43)
+  const j=new Journal({journalRoot:c.root,profileRoot:c.profile})
+  assert.equal((await j.recover())[0].result,'ROLLED_BACK')
+  assert.equal(readFileSync(join(c.profile,'package.json'),'utf8'),'A0')
+})
+test('matrix: atomicFile after-dirfsync manifest -> rollback idempotent', async ()=>{
+  const c=setup(); assert.equal(await crash('atom-after-dirfsync',c),43)
+  const j=new Journal({journalRoot:c.root,profileRoot:c.profile})
+  assert.equal((await j.recover())[0].result,'ROLLED_BACK')
+})
+test('matrix: marker-after crash -> committed path cleans', async ()=>{
+  const c=setup(); assert.equal(await crash('marker-after',c),43)
+  const j=new Journal({journalRoot:c.root,profileRoot:c.profile})
+  assert.equal((await j.recover())[0].result,'COMMITTED_OK')
+  assert.equal(readFileSync(join(c.profile,'package.json'),'utf8'),'A1')
+})
+test('matrix: tombstone-before crash -> next recover cleans', async ()=>{
+  const c=setup(); assert.equal(await crash('tombstone-before',c),43)
+  const j=new Journal({journalRoot:c.root,profileRoot:c.profile})
+  assert.equal((await j.recover())[0].result,'COMMITTED_OK')
+})
+test('matrix: tombstone-after-dirfsync crash -> sweep cleans', async ()=>{
+  const c=setup(); assert.equal(await crash('tombstone-after-dirfsync',c),43)
+  const j=new Journal({journalRoot:c.root,profileRoot:c.profile})
+  await j.recover()
+  assert.equal(j.scan().txs.length,0)
 })
 test('G1: supersede crash after new manifest before old outcome -> recover continues', async ()=>{
   const c=setup(); assert.equal(await crash('supersede-after-new-manifest',c),43)

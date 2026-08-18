@@ -108,6 +108,60 @@ if (scenario === 'resolution-confirmed-after-publish') {
   setFailpoint('atomicFile:after-publish', ({ path }) => { if (path.includes('/confirmed/')) { console.log('CRASH '+scenario); process.exit(43) } })
   await r.resolveTarget(rid, 'package.json')
 }
+if (scenario === 'replace-before') {
+  const tx = await j.begin(['package.json'])
+  setFailpoint('replaceTarget:before', ({ path }) => { if (path.endsWith('package.json')) { console.log('CRASH '+scenario); process.exit(43) } })
+  await j.writePresent(tx, 'package.json', Buffer.from('A1'))
+}
+if (scenario === 'replace-after-write') {
+  const tx = await j.begin(['package.json'])
+  setFailpoint('replaceTarget:after-write', ({ path }) => { if (path.endsWith('package.json')) { console.log('CRASH '+scenario); process.exit(43) } })
+  await j.writePresent(tx, 'package.json', Buffer.from('A1'))
+}
+if (scenario === 'append-after-dirfsync') {
+  const tx = await j.begin(['package.json'])
+  setFailpoint('appendRecord:after-dirfsync', ({ path }) => { if (path.includes('/ops/')) { console.log('CRASH '+scenario); process.exit(43) } })
+  await j.writePresent(tx, 'package.json', Buffer.from('A1'))
+}
+if (scenario === 'kill9-forward-after-rename') {
+  const tx = await j.begin(['package.json'])
+  await j.writePresent(tx, 'package.json', Buffer.from('A1'))
+  setFailpoint('replaceTarget:after-rename', ({ path }) => { if (path.endsWith('package.json')) { console.log('KILL9 '+scenario); process.kill(process.pid, 'SIGKILL') } })
+  await j.writePresent(tx, 'package.json', Buffer.from('A2'))
+}
+
+if (scenario === 'atom-before' || scenario === 'atom-after-write' || scenario === 'atom-before-dirfsync' || scenario === 'atom-after-dirfsync') {
+  const point = scenario.replace('atom-', '')
+  setFailpoint(`atomicFile:${point}`, ({ path }) => { if (path.includes('/journal/') && path.endsWith('manifest.json')) { console.log('CRASH '+scenario); process.exit(43) } })
+  await j.begin(['package.json'])
+}
+if (scenario === 'marker-after') {
+  const tx = await j.begin(['package.json'])
+  await j.writePresent(tx, 'package.json', Buffer.from('A1'))
+  setFailpoint('marker:after', ({ path }) => { if (path.endsWith('COMMITTED')) { console.log('CRASH '+scenario); process.exit(43) } })
+  await j.commitFiles(tx)
+}
+if (scenario === 'tombstone-before') {
+  const tx = await j.begin(['package.json'])
+  await j.writePresent(tx, 'package.json', Buffer.from('A1'))
+  await j.commitFiles(tx)
+  setFailpoint('tombstone:before', () => { console.log('CRASH '+scenario); process.exit(43) })
+  await j.recover()
+}
+if (scenario === 'tombstone-after-dirfsync') {
+  const tx = await j.begin(['package.json'])
+  await j.writePresent(tx, 'package.json', Buffer.from('A1'))
+  await j.commitFiles(tx)
+  setFailpoint('tombstone:after-dirfsync', () => { console.log('CRASH '+scenario); process.exit(43) })
+  await j.recover()
+}
+if (scenario === 'tombstone-after-src-fsync') {
+  const tx = await j.begin(['package.json'])
+  await j.writePresent(tx, 'package.json', Buffer.from('A1'))
+  await j.commitFiles(tx)
+  setFailpoint('tombstone:after-src-fsync', () => { console.log('CRASH '+scenario); process.exit(43) })
+  await j.recover()
+}
 if (scenario === 'supersede-after-new-manifest') {
   const tx = await j.begin(['package.json'])
   await j.writePresent(tx, 'package.json', Buffer.from('A1'))

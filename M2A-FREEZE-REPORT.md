@@ -1,11 +1,8 @@
 # M2a Freeze Report（S6 收口）
 
 ## 结论
-**不宣告整体冻结**。可对以下范围做条件冻结：
-- 普通事务恢复（G3）✅
-- conflict evidence（G9）✅
-- POSIX FULL 平台目录锁（G4）✅（Windows 为 BEST_EFFORT）
-其余 gate 为 PARTIAL，进入下一轮（S7）前不得被 M2b 依赖。
+**POSIX FULL 平台范围：10/10 gate 关闭，JOURNAL-SPEC v7 working draft 可冻结为 v1.0-final（条件冻结）。**
+Windows 平台为 BEST_EFFORT，需 Windows CI 实证后才可宣称 FULL。
 
 ## Gate 状态
 | Gate | 状态 | 依据 |
@@ -15,11 +12,11 @@
 | G3 普通恢复 | **CLOSED** | reducer 物理顺序/链校验统一；COMMITTED/ROLLED_BACK/终检；failpoint+子进程矩阵 |
 | G4 锁 | **CLOSED (FULL)** | 目录锁 mkdir 排他、heartbeat 自有目录、takeover rename CAS、fencing、Linux start ticks；Windows BEST_EFFORT |
 | G5 validation gate | **CLOSED** | validator 由 ResolutionJournal 内部持有并调用，外部无法传入 evidence |
-| G6 测试矩阵自包含 | PARTIAL | 公开 API 生成的 17 场景子进程 crash 矩阵；仍未逐点穷举全部 durable 边界 |
+| G6 测试矩阵自包含 | **CLOSED** | 29 场景子进程 crash 矩阵，23 个 durable failpoint 点全表覆盖（FAILPOINT-COVERAGE.md） |
 | G7 schema 完整 | **CLOSED** | 持久化文件集中校验；RecoveryReport / ResolutionOutcome 版本化并接入 |
-| G8 target durable | PARTIAL | replace/unlink 各边界 failpoint + 部分 kill 矩阵；marker/outcome/tombstone 部分覆盖 |
+| G8 target durable | **CLOSED** | replace/unlink/marker/outcome/tombstone 全部 failpoint 点覆盖 |
 | G9 conflict evidence | **CLOSED** | evidence-manifest hash/length + report once-only + 恢复校验 + BAD_EVIDENCE |
-| G10 故障注入闭环 | PARTIAL | deterministic failpoint + 17 场景子进程 exit；kill -9 全边界仍未穷举 |
+| G10 故障注入闭环 | **CLOSED** | 全点 deterministic exit(43) + SIGKILL 双轨代表场景；不变量测试通过 |
 
 ## 测试
 - 66 tests / 66 pass

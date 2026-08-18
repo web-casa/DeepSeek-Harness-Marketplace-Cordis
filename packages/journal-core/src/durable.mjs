@@ -62,6 +62,7 @@ export function replaceTarget(path, data, mode = 0o600) {
   const tmp = join(dirname(path), `.tmp-target-${randomBytes(6).toString('hex')}`)
   const fd = openSync(tmp, 'wx', mode)
   try { writeFileSync(fd, data) } finally { closeSync(fd) }
+  failpoint('replaceTarget:after-write', { path })
   chmodSync(tmp, mode)
   const fd2 = openSync(tmp, 'r'); try { fsyncSync(fd2) } finally { closeSync(fd2) }
   failpoint('replaceTarget:before-rename', { path })
