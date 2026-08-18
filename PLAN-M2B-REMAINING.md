@@ -17,7 +17,7 @@
 ## R2 PENDING_ACTIVATION 持久化
 - 复用 journal-core 的普通事务，不新造状态机：
   - `InstallService` 在 install commit 后创建 `activation` 事务：
-    `journal.begin(['.cordis-mp/pending-activation.json'])`；
+    `journal.begin(['.cordis-mp/pending-activation.json'])（需先扩展 journal-core target allowlist）`；
     写 pending 记录；commit。
   - `activate()` 用新事务：pending 文件内容删除/清空 + activation.activate；
     成功后 commit。
@@ -43,5 +43,6 @@
 ## 顺序
 R1 → R2 → R3（R3 依赖 R1/R2 集成）。
 ## 风险
-- tarball 解析依赖 `tar` 包；如不引入，R1 可只支持 `inspectDir` 先落地。
+- R1 引入 `tar` 包；安装阶段只解析 package/package.json 与 cordis.patch.yml。
+- R3 只验收 host 路由；client bundle 构建不在 smoke 范围。
 - DSH smoke 依赖本机 dsh/rc.6/rc.7 与网络；失败时保留日志。
