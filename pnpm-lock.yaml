@@ -13,11 +13,22 @@ importers:
       '@cordis-mp/catalog-core':
         specifier: workspace:*
         version: link:../../packages/catalog-core
+      '@cordis-mp/dsh-runner':
+        specifier: workspace:*
+        version: link:../../packages/dsh-runner
+      '@cordis-mp/install-core':
+        specifier: workspace:*
+        version: link:../../packages/install-core
+      '@cordis-mp/journal-core':
+        specifier: workspace:*
+        version: link:../../packages/journal-core
       '@cordis-mp/web-harness':
         specifier: workspace:*
         version: link:../../packages/web-harness
 
   packages/catalog-core: {}
+
+  packages/dsh-runner: {}
 
   packages/install-core:
     dependencies:
@@ -35,3 +46,6 @@ importers:
       '@cordis-mp/catalog-core':
         specifier: workspace:*
         version: link:../catalog-core
+      '@cordis-mp/install-core':
+        specifier: workspace:*
+        version: link:../install-core

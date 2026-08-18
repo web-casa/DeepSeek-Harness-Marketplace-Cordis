@@ -10,6 +10,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@cordis-mp/catalog-core": "workspace:*"
+    "@cordis-mp/catalog-core": "workspace:*",
+    "@cordis-mp/install-core": "workspace:*"
   }
 }

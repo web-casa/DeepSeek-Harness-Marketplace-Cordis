@@ -2,11 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { apply } from '../src/index.js'
 
-test('host injects webServer and mounts catalog routes', async () => {
+test('host injects webServer and mounts catalog + mutation routes', async () => {
   let captured
-  const ctx = {
-    inject(deps, fn) { captured = { deps, fn } },
-  }
+  const ctx = { inject(deps, fn) { captured = { deps, fn } } }
   apply(ctx)
   assert.deepEqual(captured.deps, ['webServer'])
   const routes = []
@@ -19,5 +17,8 @@ test('host injects webServer and mounts catalog routes', async () => {
     ['exact', '/cordis-mp/catalog'],
     ['exact', '/cordis-mp/health'],
     ['prefix', '/cordis-mp/plugin'],
+    ['exact', '/cordis-mp/install'],
+    ['exact', '/cordis-mp/uninstall'],
+    ['exact', '/cordis-mp/status'],
   ])
 })

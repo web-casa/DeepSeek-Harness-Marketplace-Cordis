@@ -11,14 +11,25 @@
   },
   "dependencies": {
     "@cordis-mp/catalog-core": "workspace:*",
-    "@cordis-mp/web-harness": "workspace:*"
+    "@cordis-mp/web-harness": "workspace:*",
+    "@cordis-mp/dsh-runner": "workspace:*",
+    "@cordis-mp/install-core": "workspace:*",
+    "@cordis-mp/journal-core": "workspace:*"
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
-      "inject": ["@deepseek-ai/dsh-client-runtime", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-ui-settings"]
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
     }
   },
-  "scripts": { "test": "node --test test/*.test.mjs" }
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
 }
