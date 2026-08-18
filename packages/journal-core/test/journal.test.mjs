@@ -199,3 +199,13 @@ test('conflict archive is once-only', async ()=>{
   await j.recover()
   await assert.rejects(()=>j.archiveConflict(tx,[{rel:'package.json',state:fileState(join(profile,'package.json'))}]), e=>e.code==='JOURNALLED')
 })
+
+test('delete absent target rejected before writing op', async ()=>{
+  const {j}=make()
+  const tx=await j.begin(['package.json'])
+  await j.deleteTarget(tx,'package.json') // present -> absent
+  await assert.rejects(()=>j.deleteTarget(tx,'package.json'), e=>e.code==='BAD_TARGET_STATE')
+  const ops=join(j.root,'journal',tx,'ops',createHash('sha256').update('package.json').digest('hex')+'.jsonl')
+  const lines=readFileSync(ops,'utf8').trim().split('\n')
+  assert.equal(lines.length,2) // 原 delete 的 INTENDED+CONFIRMED，未新增
+})

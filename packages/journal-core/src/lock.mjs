@@ -81,6 +81,7 @@ export class FileLock {
     if(!this.record) throw new LockBusy('no lease')
     this.fence()
     const rec={...this.record,heartbeatAt:Date.now()}
+    atomicFile(this.ownerPath, JSON.stringify(rec), {mode:0o600})
     atomicFile(this.hbPath, JSON.stringify({heartbeatAt:rec.heartbeatAt}), {mode:0o600})
     this.record=rec
   }

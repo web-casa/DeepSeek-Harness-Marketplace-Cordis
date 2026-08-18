@@ -19,7 +19,7 @@ export class Journal {
 
   async begin(targets) {
     this.lock?.fence()
-    const active = this.scan().txs.filter(t => t.manifest && !t.committed && !(t.outcome && t.outcome.outcome==='ROLLED_BACK'))
+    const active = this.scan().txs.filter(t => !t.committed && !(t.outcome && t.outcome.outcome==='ROLLED_BACK'))
     if (active.length > 0) throw new JournalError('ACTIVE_TX', 'an active journal transaction already exists: ' + active.map(t=>t.txid).join(','))
     const txid = randomBytes(6).toString('hex')
     const manifest = { v:1, txid, state:'PREPARING', createdAt: Date.now(), targets:{} }
@@ -74,6 +74,7 @@ export class Journal {
   async deleteTarget(tx, rel) {
     this.lock?.fence(); this.#assertRel(rel)
     const p=this.#profilePath(rel); const current=fileState(p); const owned=this.#ownedBefore(tx,rel)
+    if(!owned.exists) throw new JournalError('BAD_TARGET_STATE','cannot delete absent target: '+rel)
     if(current.hash!==owned.hash || current.exists!==owned.exists) throw new JournalError('CONFLICT','optimistic check failed')
     const next={exists:false,hash:null}
     const op=this.#beginOp(tx,rel,{kind:'FORWARD',expected:owned,next})
