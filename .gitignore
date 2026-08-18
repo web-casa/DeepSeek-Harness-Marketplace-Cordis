@@ -1,0 +1,6 @@
+node_modules/
+.tmp/
+*.log
+spikes/.npm-cache/
+spikes/S2/work/
+spikes/S2/rc7/
