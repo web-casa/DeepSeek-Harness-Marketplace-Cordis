@@ -11,10 +11,10 @@
   },
   "dependencies": {
     "@cordis-mp/catalog-core": "workspace:*",
-    "@cordis-mp/web-harness": "workspace:*",
     "@cordis-mp/dsh-runner": "workspace:*",
     "@cordis-mp/install-core": "workspace:*",
-    "@cordis-mp/journal-core": "workspace:*"
+    "@cordis-mp/journal-core": "workspace:*",
+    "@cordis-mp/web-harness": "workspace:*"
   },
   "dsh": {
     "bundle": {
@@ -31,5 +31,9 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   }
 }
