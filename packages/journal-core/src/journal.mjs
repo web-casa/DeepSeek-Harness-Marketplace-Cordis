@@ -7,7 +7,7 @@ import { fileState, targetKey, sha256, modeOf } from './state.mjs'
 import { parseOpLog, reduceOps, classifyTarget } from './reducer.mjs'
 import { validateManifest, validateOutcome, validateConflictReport, makeRecoveryReport } from './schema.mjs'
 
-const ALLOWED = new Set(['package.json','pnpm-lock.yaml','cordis.patch.yml','.cordis-mp/state.json'])
+const ALLOWED = new Set(['package.json','pnpm-lock.yaml','cordis.patch.yml','.cordis-mp/state.json','.cordis-mp/pending-activation.json'])
 
 export class JournalError extends Error { constructor(code, msg){ super(msg); this.code=code } }
 

@@ -31,7 +31,7 @@ function setup({ blocked = false } = {}) {
     async remove() { return { exitCode: 0, profileFiles: { 'package.json': Buffer.from('{}') } } },
   }
   const journal = new Journal({ journalRoot, profileRoot: profile })
-  const service = new InstallService({ catalog, journal, packageManager })
+  const service = new InstallService({ catalog, journal, packageManager, pendingPath: join(profile, '.cordis-mp') })
   return { base, profile, journalRoot, journal, service, catalog, packageManager, fresh }
 }
 
@@ -107,4 +107,30 @@ test('M2b: failed install cancels pre-disable', async () => {
 test('activate without pending is rejected', async () => {
   const c = setup()
   await assert.rejects(() => c.service.activate({ slug: 'nope' }), e => e.code === 'NO_PENDING_ACTIVATION')
+})
+
+test('R1: inspect provides entryIds to pre-disable', async () => {
+  const c = setup()
+  let seen
+  const activation = {
+    async prepareDisable({ artifact }) { seen = artifact.entryIds; return { entryIds: artifact.entryIds } },
+    async preDisable() {}, async cancelDisable() {}, async activate() {},
+  }
+  const inspect = { async inspectArtifact() { return { entryIds: ['inspect-entry'] } } }
+  const svc = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation, inspect })
+  await svc.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } })
+  assert.deepEqual(seen, ['inspect-entry'])
+})
+
+test('R2: pending activation survives service restart', async () => {
+  const c = setup()
+  const activation = { async prepareDisable() { return { entryIds: [] } }, async preDisable() {}, async cancelDisable() {}, async activate() { return { status: 'ACTIVE' } } }
+  const svc1 = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation, pendingPath: join(c.profile, '.cordis-mp') })
+  await svc1.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } })
+  // 模拟进程重启
+  const journal2 = new Journal({ journalRoot: c.journalRoot, profileRoot: c.profile })
+  const svc2 = new InstallService({ catalog: c.catalog, journal: journal2, packageManager: c.packageManager, activation, pendingPath: join(c.profile, '.cordis-mp') })
+  assert.equal(await svc2.recoverPending(), 1)
+  assert.equal((await svc2.activate({ slug: 'p' })).status, 'ACTIVE')
+  assert.equal(readFileSync(join(c.profile, '.cordis-mp', 'pending-activation.json'), 'utf8'), '{}')
 })
