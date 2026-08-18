@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Journal, ResolutionJournal, fingerprint } from '../src/index.js'
@@ -85,8 +86,8 @@ test('validation once-only and fingerprint mismatch', async ()=>{
   const rid=await c.r.beginResolution({tx, action:'accept-current'})
   const states={}
   for(const rel of Object.keys(c.j.getBaseline(tx))) states[rel]=fileState(join(c.profile,rel))
-  await c.r.recordValidation(rid,{valid:true,fingerprint:fingerprint(states)})
-  await assert.rejects(()=>c.r.recordValidation(rid,{valid:true,fingerprint:fingerprint(states)}), e=>e.code==='EEXIST')
+  await c.r.recordValidation(rid,{valid:true,fingerprint:fingerprint(states),baselineReport:{ok:true}})
+  await assert.rejects(()=>c.r.recordValidation(rid,{valid:true,fingerprint:fingerprint(states),baselineReport:{ok:true}}), e=>e.code==='JOURNALLED')
   writeFileSync(join(c.profile,'package.json'),'X2')
   assert.equal((await c.r.completeResolution(rid)).outcome,'RESOLUTION_CONFLICTED')
 })
@@ -119,4 +120,27 @@ test('terminal cleanup does not regress to conflict report', async ()=>{
   await c.r.cleanupTerminal(rid)
   const j2=new Journal({journalRoot:c.root, profileRoot:c.profile})
   const scan=j2.scan(); assert.equal(scan.txs.some(t=>t.txid===tx),false)
+})
+
+test('plan target set must equal baseline set', async ()=>{
+  const c=make(); const tx=await conflictedTx(c)
+  await assert.rejects(()=>c.r.beginResolution({tx, action:'restore-snapshot', plan:{'package.json':restorePlan(c,tx)['package.json']}}), e=>e.code==='BAD_PLAN')
+})
+
+test('corrupt snapshot is rejected before any restore write', async ()=>{
+  const c=make(); const tx=await conflictedTx(c)
+  const key=createHash('sha256').update('pnpm-lock.yaml').digest('hex')
+  writeFileSync(join(c.root,'journal',tx,'snapshots',key+'.bin'),Buffer.from('corrupt'))
+  const before=readFileSync(join(c.profile,'pnpm-lock.yaml'),'utf8')
+  await assert.rejects(()=>c.r.beginResolution({tx, action:'restore-snapshot', plan:restorePlan(c,tx)}), e=>e.code==='SNAPSHOT_BAD')
+  assert.equal(readFileSync(join(c.profile,'pnpm-lock.yaml'),'utf8'),before)
+})
+
+test('supersedes cycle is rejected', async ()=>{
+  const c=make(); const tx=await conflictedTx(c)
+  const rid=await c.r.beginResolution({tx, action:'restore-snapshot', plan:restorePlan(c,tx)})
+  // 手工制造自环
+  const mp=join(c.root,'resolutions',rid,'manifest.json')
+  const m=JSON.parse(readFileSync(mp,'utf8')); m.supersedes=rid; writeFileSync(mp,JSON.stringify(m))
+  await assert.rejects(()=>c.r.beginResolution({tx, action:'restore-snapshot', plan:restorePlan(c,tx)}), e=>e.code==='BAD_GRAPH')
 })

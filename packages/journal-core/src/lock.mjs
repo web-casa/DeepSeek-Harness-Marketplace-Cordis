@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto'
 import { atomicFile, fsyncDir } from './durable.mjs'
 
 const STALE_MS = 30_000
+const PROCESS_TOKEN = randomBytes(8).toString('hex')
 export class LockBusy extends Error { constructor(reason='lock busy'){ super(reason); this.code='LOCK_BUSY' } }
 export class LockFenced extends Error { constructor(){ super('lock token mismatch'); this.code='LOCK_FENCED' } }
 
@@ -19,7 +20,7 @@ export class FileLock {
   acquire(scope='mutation', { wait=false } = {}){
     mkdirSync(this.root,{recursive:true,mode:0o700})
     const rec={owner:'journal-core',scope,bootId:randomBytes(8).toString('hex'),
-      pid:process.pid,processStartToken:String(process.pid),
+      pid:process.pid,processStartToken:PROCESS_TOKEN,
       ownerToken:randomBytes(16).toString('hex'),epoch:1,acquiredAt:Date.now(),heartbeatAt:Date.now()}
     for(;;){
       try { atomicFile(this.path, JSON.stringify(rec), {mode:0o600, exclusive:true}); this.record=rec; return rec }

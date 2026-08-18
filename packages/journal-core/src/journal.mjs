@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, mkdirSync, readdirSync, statSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { existsSync, readFileSync, mkdirSync, readdirSync, statSync, copyFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
-import { atomicFile, appendRecord, marker, replaceTarget, unlinkTargetDurable, readJsonIfExists, fsyncDir } from './durable.mjs'
+import { atomicFile, appendRecord, marker, replaceTarget, unlinkTargetDurable, readJsonIfExists, tombstone } from './durable.mjs'
 import { fileState, targetKey, sha256, modeOf } from './state.mjs'
 
 const ALLOWED = new Set(['package.json','pnpm-lock.yaml','cordis.patch.yml','.cordis-mp/state.json'])
@@ -20,9 +20,7 @@ export class Journal {
     const dir = this.#txDir(txid); mkdirSync(dir, {recursive:true, mode:0o700})
     for (const rel of targets) {
       this.#assertRel(rel)
-      const p = this.#profilePath(rel)
-      const st = fileState(p)
-      const baseline = { state: st }
+      const p = this.#profilePath(rel); const st = fileState(p); const baseline = { state: st }
       if (st.exists) { baseline.length = readFileSync(p).length; baseline.mode = modeOf(p) || '0644'
         atomicFile(join(dir,'snapshots',targetKey(rel)+'.bin'), readFileSync(p), {mode:0o600}) }
       manifest.targets[rel] = baseline
@@ -34,52 +32,53 @@ export class Journal {
 
   #loadManifest(tx){ const m = readJsonIfExists(join(this.#txDir(tx),'manifest.json')); if(!m) throw new JournalError('NO_MANIFEST','no manifest'); return m }
   #opsPath(tx,rel){ return join(this.#txDir(tx),'ops',targetKey(rel)+'.jsonl') }
-  #readOps(tx,rel){ const p=this.#opsPath(tx,rel); if(!existsSync(p)) return []; return readFileSync(p,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch{throw new JournalError('BAD_OP','bad op line')}}) }
-  #ownedBefore(tx,rel){
-    const m=this.#loadManifest(tx); const ops=this.#readOps(tx,rel); const before=m.targets[rel].state
-    let owned=before
-    for(const op of ops){ if(op.phase==='CONFIRMED') owned=op.next }
-    return owned
+  #readOps(tx,rel){
+    const p=this.#opsPath(tx,rel); if(!existsSync(p)) return []
+    const lines=readFileSync(p,'utf8').split('\n')
+    const ops=[]
+    lines.forEach((line,i)=>{ if(!line) return
+      let op; try{ op=JSON.parse(line) }catch{ if(i===lines.length-1) return; throw new JournalError('BAD_OP','bad op line '+i) }
+      if(op.v!==1||op.txid!==tx||op.targetKey!==targetKey(rel)||!['INTENDED','CONFIRMED','CANCELLED'].includes(op.phase)) throw new JournalError('BAD_OP','invalid op record')
+      ops.push(op) })
+    return ops
   }
+  #ownedBefore(tx,rel){ const m=this.#loadManifest(tx); const before=m.targets[rel].state; let owned=before
+    for(const op of this.#readOps(tx,rel)){ if(op.phase==='CONFIRMED') owned=op.next }
+    return owned }
 
-  #appendOp(tx, rel, {kind, phase, expected, next, mode, length}){
-    const m=this.#loadManifest(tx); const before=m.targets[rel].state
-    const ops=this.#readOps(tx,rel)
-    const seq=ops.length ? ops[ops.length-1].seq + 1 : 1
-    const op={v:1,txid:tx,targetKey:targetKey(rel),opId:`${tx}-${seq}`,seq,kind,phase,expected,next,before}
-    if(next.exists){op.mode=mode;op.length=length}
+  #beginOp(tx, rel, {kind, expected, next, mode, length}){
+    const m=this.#loadManifest(tx); const ops=this.#readOps(tx,rel)
+    const seq=ops.length ? Math.max(...ops.map(o=>o.seq))+1 : 1
+    const op={v:1,txid:tx,targetKey:targetKey(rel),opId:`${tx}-${seq}`,seq,kind,phase:'INTENDED',expected,next,before:m.targets[rel].state}
+    if(next.exists){ op.mode=mode; op.length=length }
     appendRecord(this.#opsPath(tx,rel), JSON.stringify(op))
     return op
   }
+  #appendPhase(tx, rel, op, phase){ this.lock?.fence(); appendRecord(this.#opsPath(tx,rel), JSON.stringify({...op, phase})) }
 
   async writePresent(tx, rel, data) {
-    this.lock?.fence()
-    this.#assertRel(rel)
-    const m=this.#loadManifest(tx)
-    const current=fileState(this.#profilePath(rel))
-    const owned=this.#ownedBefore(tx,rel)
+    this.lock?.fence(); this.#assertRel(rel)
+    const m=this.#loadManifest(tx); const p=this.#profilePath(rel)
+    const current=fileState(p); const owned=this.#ownedBefore(tx,rel)
     if(current.hash!==owned.hash || current.exists!==owned.exists) throw new JournalError('CONFLICT','optimistic check failed')
     const next={exists:true, hash:sha256(data)}
-    const mode = owned.exists ? (m.targets[rel].mode || this.#lastMode(tx,rel) || '0644') : '0600'
-    const op=this.#appendOp(tx,rel,{kind:'FORWARD',phase:'INTENDED',expected:owned,next,mode,length:data.length})
-    replaceTarget(this.#profilePath(rel), data, parseInt(mode,8))
-    const after=fileState(this.#profilePath(rel))
-    if(after.hash!==next.hash||after.exists!==next.exists){ throw new JournalError('CONFLICT','post-write check failed') }
-    this.#appendOp(tx,rel,{kind:op.kind,phase:'CONFIRMED',expected:owned,next,mode,length:data.length})
+    const mode = owned.exists ? (this.#lastMode(tx,rel) || m.targets[rel].mode || '0644') : '0600'
+    const op=this.#beginOp(tx,rel,{kind:'FORWARD',expected:owned,next,mode,length:data.length})
+    this.lock?.fence(); replaceTarget(p, data, parseInt(mode,8))
+    const after=fileState(p)
+    if(after.hash!==next.hash||after.exists!==next.exists) throw new JournalError('CONFLICT','post-write check failed')
+    this.#appendPhase(tx,rel,op,'CONFIRMED')
   }
 
   async deleteTarget(tx, rel) {
-    this.lock?.fence()
-    this.#assertRel(rel)
-    const m=this.#loadManifest(tx)
+    this.lock?.fence(); this.#assertRel(rel)
     const p=this.#profilePath(rel); const current=fileState(p); const owned=this.#ownedBefore(tx,rel)
     if(current.hash!==owned.hash || current.exists!==owned.exists) throw new JournalError('CONFLICT','optimistic check failed')
     const next={exists:false,hash:null}
-    const op=this.#appendOp(tx,rel,{kind:'FORWARD',phase:'INTENDED',expected:owned,next})
-    unlinkTargetDurable(p)
-    const after=fileState(p)
-    if(after.exists!==false) throw new JournalError('CONFLICT','post-delete check failed')
-    this.#appendOp(tx,rel,{kind:'FORWARD',phase:'CONFIRMED',expected:owned,next})
+    const op=this.#beginOp(tx,rel,{kind:'FORWARD',expected:owned,next})
+    this.lock?.fence(); unlinkTargetDurable(p)
+    if(fileState(p).exists) throw new JournalError('CONFLICT','post-delete check failed')
+    this.#appendPhase(tx,rel,op,'CONFIRMED')
   }
 
   #lastMode(tx,rel){ const ops=this.#readOps(tx,rel); for(let i=ops.length-1;i>=0;i--){ if(ops[i].mode) return ops[i].mode } return null }
@@ -93,7 +92,7 @@ export class Journal {
       const current=fileState(this.#profilePath(rel)); const last=ops[ops.length-1]
       if(current.hash!==last.next.hash||current.exists!==last.next.exists) throw new JournalError('CONFLICT','final check failed: '+rel)
     }
-    marker(join(this.#txDir(tx),'COMMITTED'))
+    this.lock?.fence(); marker(join(this.#txDir(tx),'COMMITTED'))
     m.state='FILE_COMMITTED'; atomicFile(join(this.#txDir(tx),'manifest.json'), JSON.stringify(m,null,2),{mode:0o600})
     atomicFile(join(this.#txDir(tx),'OUTCOME.json'), JSON.stringify({v:1,txid:tx,outcome:'COMMITTED'}),{mode:0o600})
   }
@@ -123,35 +122,55 @@ export class Journal {
 
   async recover(){
     const scan=this.scan(); const report=[]
+    // 两阶段：先全局只读预检，再执行
+    const pre=[]
     for(const t of scan.txs){
-      if(t.outcome?.outcome==='COMMITTED'||t.committed){ report.push({txid:t.txid,result:'COMMITTED_OK'}); continue }
+      if(this.hasConflict(t.txid)){ report.push({txid:t.txid,result:'CONFLICTED_EXISTING'}); continue }
+      if(t.committed){
+        pre.push({t, committed:true}); continue
+      }
       try{ this.#verifySnapshots(t.txid) }catch(e){ report.push({txid:t.txid,result:e.code}); continue }
       const m=this.#loadManifest(t.txid); const classified={}; const conflicts=[]
       for(const rel of Object.keys(m.targets)){
         const r=this.#classify(t.txid,rel,m.targets[rel]); classified[rel]=r
         if(r.conflict) conflicts.push({rel,state:r.current})
       }
-      if(conflicts.length){ await this.archiveConflict(t.txid, conflicts); report.push({txid:t.txid,result:'CONFLICTED',conflicts}); continue }
-      // Phase 2: 先持久化 pending 判定，再按最新 owned 回滚
-      for(const [rel,r] of Object.entries(classified)){
-        if(r.pendingAction==='CANCELLED') this.#appendPhase(t.txid,rel,r.pending,'CANCELLED')
-        if(r.pendingAction==='CONFIRMED') this.#appendPhase(t.txid,rel,r.pending,'CONFIRMED')
+      pre.push({t, committed:false, m, classified, conflicts})
+    }
+    for(const p of pre){
+      if(p.committed){
+        const m=this.#loadManifest(p.t.txid); const bad=[]
+        for(const rel of Object.keys(m.targets)){
+          const ops=this.#readOps(p.t.txid,rel); const last=ops[ops.length-1]; const cur=fileState(this.#profilePath(rel))
+          if(!last || last.phase!=='CONFIRMED' || cur.hash!==last.next.hash || cur.exists!==last.next.exists) bad.push(rel)
+        }
+        if(bad.length){ await this.archiveConflict(p.t.txid,bad.map(rel=>({rel,state:fileState(this.#profilePath(rel))}))); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue }
+        if(!p.t.outcome?.outcome) atomicFile(join(this.#txDir(p.t.txid),'OUTCOME.json'), JSON.stringify({v:1,txid:p.t.txid,outcome:'COMMITTED'}),{mode:0o600})
+        tombstone('journal', this.#txDir(p.t.txid))
+        report.push({txid:p.t.txid,result:'COMMITTED_OK'})
+        continue
+      }
+      if(p.conflicts.length){ await this.archiveConflict(p.t.txid, p.conflicts); report.push({txid:p.t.txid,result:'CONFLICTED',conflicts:p.conflicts}); continue }
+      // Phase 2：每个 planned append 前复核 current
+      for(const [rel,r] of Object.entries(p.classified)){
+        if(r.pendingAction==='CANCELLED'){ const cur=fileState(this.#profilePath(rel)); if(cur.hash!==r.pending.expected.hash||cur.exists!==r.pending.expected.exists){ await this.archiveConflict(p.t.txid,[{rel,state:cur}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); return report }
+          this.#appendPhase(p.t.txid,rel,r.pending,'CANCELLED') }
+        if(r.pendingAction==='CONFIRMED'){ const cur=fileState(this.#profilePath(rel)); if(cur.hash!==r.pending.next.hash||cur.exists!==r.pending.next.exists){ await this.archiveConflict(p.t.txid,[{rel,state:cur}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); return report }
+          this.#appendPhase(p.t.txid,rel,r.pending,'CONFIRMED') }
       }
       const rollback=[]
-      for(const [rel] of Object.entries(classified)){
-        const owned=this.#ownedBefore(t.txid,rel); const b=m.targets[rel].state
+      for(const [rel] of Object.entries(p.classified)){
+        const owned=this.#ownedBefore(p.t.txid,rel); const b=p.m.targets[rel].state
         if(owned.hash!==b.hash||owned.exists!==b.exists) rollback.push(rel)
       }
-      for(const rel of rollback) await this.#rollbackTarget(t.txid,rel,m)
-      atomicFile(join(this.#txDir(t.txid),'OUTCOME.json'), JSON.stringify({v:1,txid:t.txid,outcome:'ROLLED_BACK'}),{mode:0o600})
-      report.push({txid:t.txid,result:'ROLLED_BACK'})
+      for(const rel of rollback){
+        try{ await this.#rollbackTarget(p.t.txid,rel,p.m) }
+        catch(e){ await this.archiveConflict(p.t.txid,[{rel,state:fileState(this.#profilePath(rel))}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); return report }
+      }
+      atomicFile(join(this.#txDir(p.t.txid),'OUTCOME.json'), JSON.stringify({v:1,txid:p.t.txid,outcome:'ROLLED_BACK'}),{mode:0o600})
+      report.push({txid:p.t.txid,result:'ROLLED_BACK'})
     }
     return report
-  }
-
-  #appendPhase(tx,rel,op,phase){
-    const next={...op, phase}
-    appendRecord(this.#opsPath(tx,rel), JSON.stringify(next))
   }
 
   #classify(tx,rel,baseline){
@@ -169,29 +188,37 @@ export class Journal {
   }
 
   async #rollbackTarget(tx,rel,m){
-    const baseline=m.targets[rel]; const p=this.#profilePath(rel)
-    const owned=this.#ownedBefore(tx,rel)
+    const baseline=m.targets[rel]; const p=this.#profilePath(rel); const owned=this.#ownedBefore(tx,rel)
     const cur=fileState(p)
     if(cur.hash!==owned.hash||cur.exists!==owned.exists) throw new JournalError('CONFLICT','rollback optimistic check failed: '+rel)
     if(baseline.state.exists){
       const bytes=readFileSync(join(this.#txDir(tx),'snapshots',targetKey(rel)+'.bin'))
-      const op=this.#appendOp(tx,rel,{kind:'ROLLBACK',phase:'INTENDED',expected:owned,next:baseline.state,mode:baseline.mode,length:bytes.length})
-      replaceTarget(p, bytes, parseInt(baseline.mode||'0644',8))
-      this.#appendOp(tx,rel,{kind:'ROLLBACK',phase:'CONFIRMED',expected:owned,next:baseline.state,mode:baseline.mode,length:bytes.length})
+      const op=this.#beginOp(tx,rel,{kind:'ROLLBACK',expected:owned,next:baseline.state,mode:baseline.mode,length:bytes.length})
+      this.lock?.fence(); replaceTarget(p, bytes, parseInt(baseline.mode||'0644',8))
+      const after=fileState(p)
+      if(after.hash!==baseline.state.hash||after.exists!==baseline.state.exists) throw new JournalError('CONFLICT','rollback post-check failed: '+rel)
+      this.#appendPhase(tx,rel,op,'CONFIRMED')
     } else {
-      const op=this.#appendOp(tx,rel,{kind:'ROLLBACK',phase:'INTENDED',expected:owned,next:baseline.state})
-      unlinkTargetDurable(p)
-      this.#appendOp(tx,rel,{kind:'ROLLBACK',phase:'CONFIRMED',expected:owned,next:baseline.state})
+      const op=this.#beginOp(tx,rel,{kind:'ROLLBACK',expected:owned,next:baseline.state})
+      this.lock?.fence(); unlinkTargetDurable(p)
+      this.#appendPhase(tx,rel,op,'CONFIRMED')
     }
   }
 
   async archiveConflict(tx, conflicts){
     const d=join(this.root,'conflicts',tx); mkdirSync(join(d,'evidence'),{recursive:true,mode:0o700})
+    const txd=this.#txDir(tx)
+    // 复制 manifest/ops/snapshots 作为证据（不修改原 journal 内容）
+    if(existsSync(join(txd,'manifest.json'))) copyFileSync(join(txd,'manifest.json'), join(d,'evidence','manifest.json'))
+    const opsDir=join(txd,'ops'); if(existsSync(opsDir)){ mkdirSync(join(d,'evidence','ops'),{recursive:true,mode:0o700}); for(const f of readdirSync(opsDir)) copyFileSync(join(opsDir,f), join(d,'evidence','ops',f)) }
+    const snapDir=join(txd,'snapshots'); if(existsSync(snapDir)){ mkdirSync(join(d,'evidence','snapshots'),{recursive:true,mode:0o700}); for(const f of readdirSync(snapDir)) copyFileSync(join(snapDir,f), join(d,'evidence','snapshots',f)) }
     for(const c of conflicts){
       const rel=c.rel; const p=this.#profilePath(rel); const st=fileState(p)
-      if(st.exists) atomicFile(join(d,'evidence',targetKey(rel)+'.bin'), readFileSync(p),{mode:0o600})
+      if(st.exists){ const bytes=readFileSync(p); atomicFile(join(d,'evidence',targetKey(rel)+'.bin'), bytes,{mode:0o600})
+        if(sha256(bytes)!==st.hash) throw new JournalError('EVIDENCE_BAD','evidence copy hash mismatch') }
       else atomicFile(join(d,'evidence',targetKey(rel)+'.absent.json'), JSON.stringify({exists:false}),{mode:0o600})
     }
-    atomicFile(join(d,'report.json'), JSON.stringify({v:1,txid:tx,conflicts},null,2),{mode:0o600})
+    atomicFile(join(d,'report.json'), JSON.stringify({v:1,txid:tx,detectedAt:Date.now(),conflicts},null,2),{mode:0o600})
+    const m=this.#loadManifest(tx); m.state='CONFLICTED'; atomicFile(join(txd,'manifest.json'), JSON.stringify(m,null,2),{mode:0o600})
   }
 }

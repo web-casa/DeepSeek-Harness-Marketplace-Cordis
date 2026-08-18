@@ -114,3 +114,38 @@ test('fenced lock blocks journal writes', async ()=>{
   writeFileSync(join(journalRoot,'lock.json'), JSON.stringify({owner:'x',pid:process.pid,processStartToken:'x',ownerToken:'other',epoch:2,heartbeatAt:Date.now()}))
   await assert.rejects(()=>guarded.writePresent(tx,'package.json',Buffer.from('A1')), e=>e.code==='LOCK_FENCED')
 })
+
+test('INTENDED and CONFIRMED share opId and seq', async ()=>{
+  const {j,journalRoot}=make()
+  const tx=await j.begin(['package.json'])
+  await j.writePresent(tx,'package.json',Buffer.from('A1'))
+  const opsFile=join(journalRoot,'journal',tx,'ops',createHash('sha256').update('package.json').digest('hex')+'.jsonl')
+  const ops=readFileSync(opsFile,'utf8').trim().split('\n').map(l=>JSON.parse(l))
+  assert.equal(ops.length,2)
+  assert.equal(ops[0].opId,ops[1].opId)
+  assert.equal(ops[0].seq,ops[1].seq)
+  assert.equal(ops[0].phase,'INTENDED'); assert.equal(ops[1].phase,'CONFIRMED')
+})
+
+test('COMMITTED marker with tampered target is CONFLICTED, not rollback', async ()=>{
+  const {j,profile}=make()
+  const tx=await j.begin(['package.json'])
+  await j.writePresent(tx,'package.json',Buffer.from('A1'))
+  await j.commitFiles(tx)
+  writeFileSync(join(profile,'package.json'),'X')
+  const report=await j.recover()
+  assert.equal(report[0].result,'CONFLICTED')
+  assert.equal(readFileSync(join(profile,'package.json'),'utf8'),'X')
+})
+
+test('existing conflict report blocks automatic recovery', async ()=>{
+  const {j,profile}=make()
+  const tx=await j.begin(['package.json'])
+  await j.writePresent(tx,'package.json',Buffer.from('A1'))
+  writeFileSync(join(profile,'package.json'),'X')
+  await j.recover() // creates report + CONFLICTED
+  const before=readFileSync(join(profile,'package.json'),'utf8')
+  const report=await j.recover()
+  assert.equal(report[0].result,'CONFLICTED_EXISTING')
+  assert.equal(readFileSync(join(profile,'package.json'),'utf8'),before)
+})

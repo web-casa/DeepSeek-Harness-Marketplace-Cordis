@@ -3,8 +3,7 @@ import { join, dirname, basename } from 'node:path'
 import { randomBytes } from 'node:crypto'
 
 export function fsyncDir(dir) {
-  let fd
-  try { fd = openSync(dir, 'r') } catch { return }
+  const fd = openSync(dir, 'r')
   try { fsyncSync(fd) } finally { closeSync(fd) }
 }
 export function atomicFile(path, content, { mode = 0o600, exclusive = false } = {}) {
@@ -33,6 +32,7 @@ export function appendRecord(path, line) {
 }
 export function marker(path) { atomicFile(path, '', { exclusive: true }) }
 export function replaceTarget(path, data, mode = 0o600) {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
   const tmp = join(dirname(path), `.tmp-target-${randomBytes(6).toString('hex')}`)
   const fd = openSync(tmp, 'wx', mode)
   try { writeFileSync(fd, data) } finally { closeSync(fd) }
@@ -52,7 +52,8 @@ export { randomBytes }
 
 export function tombstone(kind, dir) {
   if (!existsSync(dir)) return
-  const trashRoot = join(dirname(dir), 'trash')
+  // 统一 trash 根目录：<root>/trash
+  const trashRoot = join(dirname(dirname(dir)), 'trash')
   mkdirSync(trashRoot, { recursive: true, mode: 0o700 })
   const target = join(trashRoot, `${kind}-${basename(dir)}-${randomBytes(6).toString('hex')}`)
   renameSync(dir, target)
