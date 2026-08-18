@@ -171,3 +171,27 @@ test('plain object cannot pass as validation evidence', async ()=>{
   for(const rel of Object.keys(c.j.getBaseline(tx))) states[rel]=fileState(join(c.profile,rel))
   await assert.rejects(()=>c.r.recordValidation(rid,{valid:true,fingerprint:fingerprint(states),baselineReport:{ok:true}}), e=>e.code==='BAD_EVIDENCE')
 })
+
+test('recover() finishes partial restore and cleans terminal', async ()=>{
+  const c=make(); const tx=await conflictedTx(c)
+  const rid=await c.r.beginResolution({tx, action:'restore-snapshot', plan:restorePlan(c,tx)})
+  await c.r.resolveTarget(rid,'package.json')
+  // 新进程模拟：recover 应继续第二 target 并清理
+  const r2=new ResolutionJournal(new Journal({journalRoot:c.root, profileRoot:c.profile}))
+  const report=await r2.recover()
+  assert.equal(report[0].result,'RESOLVED')
+  assert.equal(existsSync(join(c.root,'resolutions',rid)),false)
+  assert.equal(readFileSync(join(c.profile,'pnpm-lock.yaml'),'utf8'),'B0')
+})
+
+test('recover() completes validated accept-current', async ()=>{
+  const c=make(); const tx=await conflictedTx(c)
+  const rid=await c.r.beginResolution({tx, action:'accept-current'})
+  const states={}
+  for(const rel of Object.keys(c.j.getBaseline(tx))) states[rel]=fileState(join(c.profile,rel))
+  await c.r.recordValidation(rid,createValidationEvidence({ok:true}, fingerprint(states)))
+  const r2=new ResolutionJournal(new Journal({journalRoot:c.root, profileRoot:c.profile}))
+  const report=await r2.recover()
+  assert.equal(report[0].result,'ACCEPTED_CURRENT')
+  assert.equal(existsSync(join(c.root,'resolutions',rid)),false)
+})

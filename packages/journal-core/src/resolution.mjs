@@ -168,6 +168,60 @@ export class ResolutionJournal {
     throw new ResolutionError('BAD_ACTION','unknown action')
   }
 
+
+  async markConflicted(rid){
+    const m=this.#manifest(rid)
+    atomicFile(this.#outcomePath(rid), JSON.stringify({v:1,resolutionId:rid,txid:m.txid,outcome:'RESOLUTION_CONFLICTED'}), {mode:0o600})
+  }
+
+  async recover(){
+    const report=[]
+    let list
+    try { list=this.list() } catch(e){ return [{result:e.code}] }
+    const byTx={}
+    for(const r of list){ const tx=r.manifest?.txid; if(!tx) continue; (byTx[tx]??=[]).push(r) }
+    for(const [tx] of Object.entries(byTx)){
+      let heads
+      try{ heads=this.#validateGraphForTx(tx).heads }catch(e){ report.push({tx,result:e.code}); continue }
+      if(heads.length!==1){ report.push({tx,result:'NO_HEAD'}); continue }
+      const head=heads[0]; const rid=head.rid
+      const m=this.#manifest(rid)
+      const outcome=head.outcome?.outcome ?? null
+      if(outcome==='RESOLVED' || outcome==='ACCEPTED_CURRENT'){
+        try{ await this.cleanupTerminal(rid); report.push({tx,rid,result:'CLEANED_TERMINAL'}) }catch(e){ report.push({tx,rid,result:e.code}) }
+        continue
+      }
+      if(outcome==='RESOLUTION_CONFLICTED'){ report.push({tx,rid,result:'WAITING_AUTHORIZATION'}); continue }
+      if(outcome==='SUPERSEDED'){ try{ tombstone('resolution', this.#dir(rid)); report.push({tx,rid,result:'CLEANED_SUPERSEDED'}) }catch(e){ report.push({tx,rid,result:e.code}) }; continue }
+      if(m.action==='restore-snapshot'){
+        try{ this.#preflightRestore(m.txid, m.plan) }catch(e){ report.push({tx,rid,result:e.code}); continue }
+        const conflicts=[]
+        for(const rel of Object.keys(m.plan)){
+          try{ await this.resolveTarget(rid, rel) }catch(e){ conflicts.push({rel,error:e.code}) }
+        }
+        if(conflicts.length){ try{ await this.markConflicted(rid) }catch{}; report.push({tx,rid,result:'RESOLUTION_CONFLICTED',conflicts}); continue }
+        try{
+          const out=await this.completeResolution(rid)
+          report.push({tx,rid,result:out.outcome})
+          if(out.outcome==='RESOLVED'){ try{ await this.cleanupTerminal(rid) }catch(e){ report[report.length-1].cleanup=e.code } }
+        }catch(e){ report.push({tx,rid,result:e.code}) }
+        continue
+      }
+      if(m.action==='accept-current'){
+        const val=readJsonIfExists(this.#validationPath(rid))
+        if(!val){ report.push({tx,rid,result:'WAITING_VALIDATION'}); continue }
+        try{
+          const out=await this.completeResolution(rid)
+          report.push({tx,rid,result:out.outcome})
+          if(out.outcome==='ACCEPTED_CURRENT'){ try{ await this.cleanupTerminal(rid) }catch(e){ report[report.length-1].cleanup=e.code } }
+        }catch(e){ report.push({tx,rid,result:e.code}) }
+        continue
+      }
+      report.push({tx,rid,result:'BAD_ACTION'})
+    }
+    return report
+  }
+
   scan(){
     const byTx={}
     for(const r of this.list()){ const tx=r.manifest?.txid; if(!tx) continue; (byTx[tx]??=[]).push(r) }

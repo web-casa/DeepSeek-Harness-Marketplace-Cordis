@@ -10,9 +10,23 @@ const PROCESS_TOKEN = randomBytes(8).toString('hex')
 export class LockBusy extends Error { constructor(reason='lock busy'){ super(reason); this.code='LOCK_BUSY' } }
 export class LockFenced extends Error { constructor(){ super('lock token mismatch'); this.code='LOCK_FENCED' } }
 
+function processStartTicks(pid){
+  if (process.platform !== 'linux') return null
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+    const close = stat.lastIndexOf(')')
+    return Number(stat.slice(close + 1).trim().split(/\s+/)[19])
+  } catch { return null }
+}
 function ownerAlive(rec){
   if (!rec || !Number.isInteger(rec.pid)) return false
-  try { process.kill(rec.pid, 0); return true } catch { return false }
+  try { process.kill(rec.pid, 0) } catch { return false }
+  // PID 复用防护：Linux 下比较 /proc/<pid> 进程启动 ticks。
+  if (process.platform === 'linux' && Number.isInteger(rec.processStartTicks)) {
+    const ticks = processStartTicks(rec.pid)
+    if (ticks !== null && ticks !== rec.processStartTicks) return false
+  }
+  return true
 }
 function stale(rec){ return Date.now() - (rec.heartbeatAt ?? 0) > STALE_MS }
 
@@ -25,14 +39,19 @@ export class FileLock {
     mkdirSync(this.root,{recursive:true,mode:0o700})
     const rec={owner:'journal-core',scope,bootId:randomBytes(8).toString('hex'),
       pid:process.pid,processStartToken:PROCESS_TOKEN,
-      ownerToken:randomBytes(16).toString('hex'),epoch:1,acquiredAt:Date.now(),heartbeatAt:Date.now()}
+      ownerToken:randomBytes(16).toString('hex'),epoch:1,acquiredAt:Date.now(),heartbeatAt:Date.now(),processStartTicks:processStartTicks(process.pid) ?? undefined}
     for(;;){
       try {
         mkdirSync(this.dir,{mode:0o700})
-        atomicFile(this.ownerPath, JSON.stringify(rec), {mode:0o600})
-        atomicFile(this.hbPath, JSON.stringify({heartbeatAt:rec.heartbeatAt}), {mode:0o600})
-        this.record=rec
-        return rec
+        try {
+          atomicFile(this.ownerPath, JSON.stringify(rec), {mode:0o600})
+          atomicFile(this.hbPath, JSON.stringify({heartbeatAt:rec.heartbeatAt}), {mode:0o600})
+          this.record=rec
+          return rec
+        } catch(inner){ // 半初始化目录不能留成永久 BUSY
+          try { rmSync(this.dir,{recursive:true,force:true}) } catch {}
+          throw inner
+        }
       } catch(e){
         if(e.code!=='EEXIST') throw e
         let cur=this.#readOwner(this.ownerPath)
@@ -78,8 +97,14 @@ export class FileLock {
   }
 }
 
-export function sweepLockDebris(root){
+export function sweepLockDebris(root, { olderThanMs = 60_000 } = {}){
+  if (!existsSync(root)) return
   for(const name of readdirSync(root)){
-    if(name.startsWith('lock.stolen-')){ const p=join(root,name); try{ if(statSync(p).isDirectory()) rmSync(p,{recursive:true,force:true}) }catch{} }
+    if(!name.startsWith('lock.stolen-')) continue
+    const p=join(root,name)
+    try {
+      if(!statSync(p).isDirectory()) continue
+      if(Date.now() - statSync(p).mtimeMs > olderThanMs) rmSync(p,{recursive:true,force:true})
+    } catch {}
   }
 }

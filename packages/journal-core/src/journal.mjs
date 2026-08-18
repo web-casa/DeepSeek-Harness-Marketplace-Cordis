@@ -2,6 +2,7 @@ import { existsSync, readFileSync, mkdirSync, readdirSync, statSync, copyFileSyn
 import { join, dirname } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { atomicFile, appendRecord, marker, replaceTarget, unlinkTargetDurable, readJsonIfExists, tombstone, sweepTrash } from './durable.mjs'
+import { sweepLockDebris } from './lock.mjs'
 import { fileState, targetKey, sha256, modeOf } from './state.mjs'
 import { parseOpLog, reduceOps, classifyTarget } from './reducer.mjs'
 
@@ -153,6 +154,7 @@ export class Journal {
   }
 
   async recover(){
+    sweepLockDebris(this.root)
     sweepTrash(this.root)
     const scan=this.scan(); const report=[]
     // 两阶段：先全局只读预检，再执行

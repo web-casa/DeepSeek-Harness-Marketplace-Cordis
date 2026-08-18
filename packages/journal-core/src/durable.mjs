@@ -3,9 +3,20 @@ import { join, dirname, basename } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { failpoint } from './failpoints.mjs'
 
+let fsyncWarning = false
+export function durabilityTier() { return process.platform === 'win32' ? 'BEST_EFFORT' : 'FULL' }
 export function fsyncDir(dir) {
-  const fd = openSync(dir, 'r')
-  try { fsyncSync(fd) } finally { closeSync(fd) }
+  try {
+    const fd = openSync(dir, 'r')
+    try { fsyncSync(fd) } finally { closeSync(fd) }
+  } catch (e) {
+    // Windows 目录句柄语义差异：FULL 降级为 BEST_EFFORT，仅告警一次。
+    if (process.platform === 'win32' && ['EISDIR','EPERM','EINVAL','ENOTSUP'].includes(e.code)) {
+      if (!fsyncWarning) { console.warn('[journal-core] dir fsync unavailable on win32; durability tier=BEST_EFFORT'); fsyncWarning = true }
+      return
+    }
+    throw e
+  }
 }
 export function atomicFile(path, content, { mode = 0o600, exclusive = false } = {}) {
   failpoint('atomicFile:before', { path, exclusive })
