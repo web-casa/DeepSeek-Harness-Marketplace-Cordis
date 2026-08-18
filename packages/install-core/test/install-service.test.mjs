@@ -26,9 +26,9 @@ function setup({ blocked = false } = {}) {
   }
   const newPkg = Buffer.from('{"new":true}')
   const packageManager = {
-    async installVerifiedArtifact(artifact) { this.artifact = artifact; return { exitCode: 0, stderr: '', profileFiles: { 'package.json': newPkg } } },
+    async installVerifiedArtifact(artifact) { this.artifact = artifact; writeFileSync(join(profile, 'package.json'), newPkg); return { exitCode: 0, stderr: '', profileFiles: { 'package.json': newPkg } } },
     async verifyInstalled() { return true },
-    async remove() { return { exitCode: 0, profileFiles: { 'package.json': Buffer.from('{}') } } },
+    async remove() { writeFileSync(join(profile, 'package.json'), '{}'); return { exitCode: 0, profileFiles: { 'package.json': Buffer.from('{}') } } },
   }
   const journal = new Journal({ journalRoot, profileRoot: profile })
   const service = new InstallService({ catalog, journal, packageManager, pendingPath: join(profile, '.cordis-mp') })

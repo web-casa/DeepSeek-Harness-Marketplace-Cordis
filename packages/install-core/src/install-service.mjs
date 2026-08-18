@@ -52,8 +52,8 @@ export class InstallService {
     try {
       const result = await this.packageManager.installVerifiedArtifact(artifact, signal)
       if (result.exitCode !== 0) throw new InstallError('INSTALL_FAILED', result.stderr || `exit ${result.exitCode}`)
-      for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
-        await this.journal.writePresent(tx, rel, bytes)
+      for (const rel of Object.keys(result.profileFiles || {})) {
+        await this.journal.adoptExternal(tx, rel)
       }
       const verified = await this.packageManager.verifyInstalled(artifact)
       if (!verified) throw new InstallError('VERIFY_FAILED', 'installed package does not match verified artifact')
@@ -107,8 +107,8 @@ export class InstallService {
     try {
       const result = await this.packageManager.remove(packageName, signal)
       if (result.exitCode !== 0) throw new InstallError('REMOVE_FAILED', result.stderr || `exit ${result.exitCode}`)
-      for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
-        await this.journal.writePresent(tx, rel, bytes)
+      for (const rel of Object.keys(result.profileFiles || {})) {
+        await this.journal.adoptExternal(tx, rel)
       }
       await this.journal.commitFiles(tx)
     } catch (e) {

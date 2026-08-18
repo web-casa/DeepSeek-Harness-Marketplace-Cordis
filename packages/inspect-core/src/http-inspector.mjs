@@ -33,7 +33,9 @@ export class HttpArtifactInspector {
           hash.update(value)
           if (!out.write(value)) await new Promise(r => out.once('drain', r))
         }
-      } finally { out.end(); reader.releaseLock?.() }
+      } finally { reader.releaseLock?.() }
+      out.end()
+      await new Promise((resolve, reject) => { out.once('finish', resolve); out.once('error', reject) })
     } else {
       const buf = Buffer.from(await res.arrayBuffer())
       bytes = buf.length

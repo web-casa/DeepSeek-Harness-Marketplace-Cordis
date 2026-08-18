@@ -46,3 +46,11 @@ test('preDisable matches id literally, dot does not match any char', async () =>
   assert.deepEqual(state.forced, ['aXb'])
   assert.deepEqual(state.disables, ['a.b'])
 })
+
+test('preDisable on default [] template produces valid patch', async () => {
+  const { port, patchPath } = setup('[]\n')
+  assert.equal(port.preDisable(['a']), 1)
+  assert.match(readFileSync(patchPath, 'utf8'), /^- id: a\s*\n {2}disabled: true/m)
+  assert.equal(port.activate(['a']), 1)
+  assert.equal(readFileSync(patchPath, 'utf8').trim(), '[]')
+})

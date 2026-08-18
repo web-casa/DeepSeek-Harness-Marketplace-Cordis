@@ -107,6 +107,20 @@ export class Journal {
     this.lock?.fence(); atomicFile(join(this.#txDir(tx),'OUTCOME.json'), JSON.stringify({v:1,txid:tx,outcome:'COMMITTED'}),{mode:0o600})
   }
 
+
+  async adoptExternal(tx, rel) {
+    this.lock?.fence()
+    this.#assertRel(rel)
+    const baseline = this.#loadManifest(tx).targets[rel].state
+    const current = fileState(this.#profilePath(rel))
+    if (current.exists === baseline.exists && current.hash === baseline.hash) return false
+    const mode = current.exists ? (modeOf(this.#profilePath(rel)) || '0644') : undefined
+    const length = current.exists ? readFileSync(this.#profilePath(rel)).length : undefined
+    const op = this.#beginOp(tx, rel, { kind: 'FORWARD', expected: baseline, next: current, mode, length })
+    this.#appendPhase(tx, rel, op, 'CONFIRMED')
+    return true
+  }
+
   getBaseline(tx){ return this.#loadManifest(tx).targets }
   readSnapshot(tx, rel){ const b=this.getBaseline(tx)[rel]; if(!b) return null; if(!b.state.exists) return null; return readFileSync(join(this.#txDir(tx),'snapshots',targetKey(rel)+'.bin')) }
   txExists(tx){ return existsSync(join(this.#txDir(tx),'manifest.json')) }

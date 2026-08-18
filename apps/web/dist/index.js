@@ -311,8 +311,8 @@ var InstallService = class {
     try {
       const result = await this.packageManager.installVerifiedArtifact(artifact, signal);
       if (result.exitCode !== 0) throw new InstallError("INSTALL_FAILED", result.stderr || `exit ${result.exitCode}`);
-      for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
-        await this.journal.writePresent(tx, rel, bytes);
+      for (const rel of Object.keys(result.profileFiles || {})) {
+        await this.journal.adoptExternal(tx, rel);
       }
       const verified = await this.packageManager.verifyInstalled(artifact);
       if (!verified) throw new InstallError("VERIFY_FAILED", "installed package does not match verified artifact");
@@ -396,8 +396,8 @@ var InstallService = class {
     try {
       const result = await this.packageManager.remove(packageName, signal);
       if (result.exitCode !== 0) throw new InstallError("REMOVE_FAILED", result.stderr || `exit ${result.exitCode}`);
-      for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
-        await this.journal.writePresent(tx, rel, bytes);
+      for (const rel of Object.keys(result.profileFiles || {})) {
+        await this.journal.adoptExternal(tx, rel);
       }
       await this.journal.commitFiles(tx);
     } catch (e) {
@@ -765,6 +765,8 @@ var DshActivationPort = class {
     if (ids.length === 0) return 0;
     let text = this.#text().replace(/\n?$/, "\n");
     const lines = text.split("\n");
+    const emptyIdx = lines.findIndex((l) => /^\s*\[\]\s*$/.test(l));
+    if (emptyIdx !== -1) lines.splice(emptyIdx, 1);
     let changed = 0;
     for (const id of ids) {
       let found = false;
@@ -802,7 +804,11 @@ var DshActivationPort = class {
       }
       out.push(lines[i]);
     }
-    if (removed > 0) this.#save(out.join("\n"));
+    if (removed > 0) {
+      const hasRows = out.some((l) => /^\s*- /.test(l));
+      if (!hasRows) out[0] = "[]";
+      this.#save(out.join("\n"));
+    }
     return removed;
   }
   async prepareDisable({ artifact }) {
@@ -1358,6 +1364,18 @@ var Journal = class {
     atomicFile(join6(this.#txDir(tx), "manifest.json"), JSON.stringify(m2, null, 2), { mode: 384 });
     this.lock?.fence();
     atomicFile(join6(this.#txDir(tx), "OUTCOME.json"), JSON.stringify({ v: 1, txid: tx, outcome: "COMMITTED" }), { mode: 384 });
+  }
+  async adoptExternal(tx, rel) {
+    this.lock?.fence();
+    this.#assertRel(rel);
+    const baseline = this.#loadManifest(tx).targets[rel].state;
+    const current = fileState(this.#profilePath(rel));
+    if (current.exists === baseline.exists && current.hash === baseline.hash) return false;
+    const mode = current.exists ? modeOf(this.#profilePath(rel)) || "0644" : void 0;
+    const length = current.exists ? readFileSync7(this.#profilePath(rel)).length : void 0;
+    const op = this.#beginOp(tx, rel, { kind: "FORWARD", expected: baseline, next: current, mode, length });
+    this.#appendPhase(tx, rel, op, "CONFIRMED");
+    return true;
   }
   getBaseline(tx) {
     return this.#loadManifest(tx).targets;
@@ -4761,9 +4779,13 @@ var HttpArtifactInspector = class {
           if (!out.write(value)) await new Promise((r) => out.once("drain", r));
         }
       } finally {
-        out.end();
         reader.releaseLock?.();
       }
+      out.end();
+      await new Promise((resolve, reject) => {
+        out.once("finish", resolve);
+        out.once("error", reject);
+      });
     } else {
       const buf = Buffer.from(await res.arrayBuffer());
       bytes = buf.length;

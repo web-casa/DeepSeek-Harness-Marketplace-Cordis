@@ -45,6 +45,8 @@ export class DshActivationPort {
     if (ids.length === 0) return 0
     let text = this.#text().replace(/\n?$/, '\n')
     const lines = text.split('\n')
+    const emptyIdx = lines.findIndex(l => /^\s*\[\]\s*$/.test(l))
+    if (emptyIdx !== -1) lines.splice(emptyIdx, 1)
     let changed = 0
     for (const id of ids) {
       let found = false
@@ -72,7 +74,11 @@ export class DshActivationPort {
       if (m && ids.has(m[1]) && /^ {2}disabled: true\s*$/.test(lines[i + 1] ?? '')) { i++; removed++; continue }
       out.push(lines[i])
     }
-    if (removed > 0) this.#save(out.join('\n'))
+    if (removed > 0) {
+      const hasRows = out.some(l => /^\s*- /.test(l))
+      if (!hasRows) out[0] = '[]'
+      this.#save(out.join('\n'))
+    }
     return removed
   }
   async prepareDisable({ artifact }) { return { entryIds: artifact?.entryIds || [] } }
