@@ -15,4 +15,5 @@
 - S1 完成：骨架 + durable primitives + 基础 lock
 - S2 完成：普通事务 begin/writePresent/delete/commitFiles/recover + 10 tests
 - S4 部分完成：exclusive acquire / takeover CAS / heartbeat+fencing + 5 tests
-- S3/S5/S6 TODO
+- S3 完成：ResolutionJournal restore/accept/supersede/cleanup + 8 tests
+- S5/S6 TODO

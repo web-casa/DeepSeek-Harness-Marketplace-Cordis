@@ -49,3 +49,13 @@ export function readJsonIfExists(path) {
   try { return JSON.parse(readFileSync(path, 'utf8')) } catch (e) { if (e.code === 'ENOENT') return null; throw e }
 }
 export { randomBytes }
+
+export function tombstone(kind, dir) {
+  if (!existsSync(dir)) return
+  const trashRoot = join(dirname(dir), 'trash')
+  mkdirSync(trashRoot, { recursive: true, mode: 0o700 })
+  const target = join(trashRoot, `${kind}-${basename(dir)}-${randomBytes(6).toString('hex')}`)
+  renameSync(dir, target)
+  fsyncDir(dirname(dir))
+  fsyncDir(trashRoot)
+}

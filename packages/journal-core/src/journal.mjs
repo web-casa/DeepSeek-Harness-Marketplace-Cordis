@@ -98,6 +98,11 @@ export class Journal {
     atomicFile(join(this.#txDir(tx),'OUTCOME.json'), JSON.stringify({v:1,txid:tx,outcome:'COMMITTED'}),{mode:0o600})
   }
 
+  getBaseline(tx){ return this.#loadManifest(tx).targets }
+  readSnapshot(tx, rel){ const b=this.getBaseline(tx)[rel]; if(!b) return null; if(!b.state.exists) return null; return readFileSync(join(this.#txDir(tx),'snapshots',targetKey(rel)+'.bin')) }
+  txExists(tx){ return existsSync(join(this.#txDir(tx),'manifest.json')) }
+  hasConflict(tx){ return existsSync(join(this.root,'conflicts',tx,'report.json')) }
+
   scan(){ const out={txs:[]}; if(!existsSync(this.txDir)) return out
     for(const tx of readdirSync(this.txDir)){ const d=join(this.txDir,tx); if(!statSync(d).isDirectory()) continue
       const m=readJsonIfExists(join(d,'manifest.json')); const committed=existsSync(join(d,'COMMITTED')); const outcome=readJsonIfExists(join(d,'OUTCOME.json'))
