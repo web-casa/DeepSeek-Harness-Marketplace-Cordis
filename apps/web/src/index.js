@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CatalogClient } from '@cordis-mp/catalog-core'
 import { mountCatalogRoutes, mountMutationRoutes, mountSessionRoute, MutationGuard } from '@cordis-mp/web-harness'
-import { DshRunner, DshPackageManagerPort } from '@cordis-mp/dsh-runner'
+import { DshRunner, DshPackageManagerPort, DshActivationPort } from '@cordis-mp/dsh-runner'
 import { Journal } from '@cordis-mp/journal-core'
 import { InstallService } from '@cordis-mp/install-core'
 
@@ -30,7 +30,8 @@ export function apply(ctx) {
     const runner = new DshRunner({ dshHome: process.env.DSH_HOME, profile: process.env.CORDIS_MP_PROFILE || 'web' })
     const packageManager = new DshPackageManagerPort({ runner, profileDir: dir })
     const journal = new Journal({ journalRoot: join(dir, '.cordis-mp'), profileRoot: dir })
-    const installService = new InstallService({ catalog, journal, packageManager })
+    const activation = new DshActivationPort({ patchPath: join(dir, 'cordis.patch.yml') })
+    const installService = new InstallService({ catalog, journal, packageManager, activation })
     const guard = new MutationGuard()
     hostCtx.effect(() => {
       const a = mountCatalogRoutes(webServer, catalog)
