@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { atomicFile, marker, replaceTarget, unlinkTargetDurable, readJsonIfExists, tombstone, fsyncDir } from './durable.mjs'
 import { fileState, fingerprint, targetKey, sha256 } from './state.mjs'
 import { JournalError } from './journal.mjs'
+import { validateResolutionManifest, validateValidation } from './schema.mjs'
 import { isValidationEvidence } from './validation.mjs'
 
 export class ResolutionError extends JournalError {}
@@ -12,7 +13,8 @@ export class ResolutionJournal {
   constructor(journal, { lock = null } = {}) { this.journal = journal; this.root = journal.root; this.profile = journal.profile; this.dir = join(this.root,'resolutions'); this.lock = lock }
 
   #dir(rid){ return join(this.dir, rid) }
-  #manifest(rid){ const m=readJsonIfExists(join(this.#dir(rid),'manifest.json')); if(!m) throw new ResolutionError('NO_MANIFEST','resolution manifest missing: '+rid); return m }
+  #manifest(rid){ const raw=readJsonIfExists(join(this.#dir(rid),'manifest.json')); if(!raw) throw new ResolutionError('NO_MANIFEST','resolution manifest missing: '+rid)
+    try { return validateResolutionManifest(raw) } catch(e) { throw new ResolutionError('BAD_MANIFEST', e.message) } }
   #writeManifest(rid,m){ this.lock?.fence(); atomicFile(join(this.#dir(rid),'manifest.json'), JSON.stringify(m,null,2), {mode:0o600}) }
   #opPath(rid,rel){ return join(this.#dir(rid),'ops',targetKey(rel)+'.json') }
   #confirmedPath(rid,rel){ return join(this.#dir(rid),'confirmed',targetKey(rel)) }
@@ -24,6 +26,12 @@ export class ResolutionJournal {
       const m=readJsonIfExists(join(d,'manifest.json')); const outcome=readJsonIfExists(join(d,'OUTCOME.json')); out.push({rid:name,manifest:m,outcome}) }
     return out }
 
+  #trashHasResolution(rid){
+    const trash=join(this.root,'trash')
+    if(!existsSync(trash)) return false
+    for(const name of readdirSync(trash)){ if(name.startsWith(`resolution-${rid}-`)) return true }
+    return false
+  }
   #validateGraphForTx(tx){
     const rs=this.list().filter(r=>r.manifest?.txid===tx)
     const byRid=new Map(rs.map(r=>[r.rid,r]))
@@ -31,8 +39,10 @@ export class ResolutionJournal {
       const old=r.manifest.supersedes
       if(old!==null && old!==undefined){
         const target=byRid.get(old)
-        if(!target) throw new ResolutionError('BAD_GRAPH','dangling supersedes: '+old)
-        if(target.manifest.txid!==tx) throw new ResolutionError('BAD_GRAPH','cross-tx supersedes')
+        if(!target){
+          // 祖先已在 tombstone crash 中移入 trash 时允许悬挂引用（S7 G2）
+          if(!this.#trashHasResolution(old)) throw new ResolutionError('BAD_GRAPH','dangling supersedes: '+old)
+        } else if(target.manifest.txid!==tx) throw new ResolutionError('BAD_GRAPH','cross-tx supersedes')
       }
     }
     // 循环检测：沿 supersedes 走，若有环/链长>节点数 => 错
@@ -158,7 +168,8 @@ export class ResolutionJournal {
       return {outcome:'RESOLVED'}
     }
     if(m.action==='accept-current'){
-      const val=readJsonIfExists(this.#validationPath(rid))
+      let val
+      try { val=readJsonIfExists(this.#validationPath(rid)); if(val) validateValidation(val) } catch(e) { throw new ResolutionError('BAD_VALIDATION', e.message) }
       if(!val || val.valid!==true) throw new ResolutionError('NO_VALIDATION','no validation evidence')
       const fp=this.#currentFingerprint(m.txid)
       if(fp!==val.fingerprint){ atomicFile(this.#outcomePath(rid), JSON.stringify({v:1,resolutionId:rid,outcome:'RESOLUTION_CONFLICTED'}), {mode:0o600}); return {outcome:'RESOLUTION_CONFLICTED'} }
@@ -208,7 +219,8 @@ export class ResolutionJournal {
         continue
       }
       if(m.action==='accept-current'){
-        const val=readJsonIfExists(this.#validationPath(rid))
+        let val
+        try { val=readJsonIfExists(this.#validationPath(rid)); if(val) validateValidation(val) } catch(e) { report.push({tx,rid,result:e.code}); continue }
         if(!val){ report.push({tx,rid,result:'WAITING_VALIDATION'}); continue }
         try{
           const out=await this.completeResolution(rid)
@@ -247,7 +259,10 @@ export class ResolutionJournal {
     let cur=m.supersedes
     while(cur){ if(seen.has(cur)) throw new ResolutionError('BAD_GRAPH','cycle in supersedes chain'); seen.add(cur)
       const rm=readJsonIfExists(join(this.#dir(cur),'manifest.json'))
-      if(!rm) throw new ResolutionError('BAD_GRAPH','dangling ancestor during cleanup: '+cur)
+      if(!rm){
+        if(this.#trashHasResolution(cur)) break // 已 tombstone 的祖先：正常断链
+        throw new ResolutionError('BAD_GRAPH','dangling ancestor during cleanup: '+cur)
+      }
       if(rm.txid!==tx) throw new ResolutionError('BAD_GRAPH','cross-tx ancestor during cleanup')
       ancestors.push(cur); cur=rm.supersedes }
     for(const rid of ancestors.reverse()) tombstone('resolution', this.#dir(rid))

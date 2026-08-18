@@ -5,6 +5,7 @@ import { atomicFile, appendRecord, marker, replaceTarget, unlinkTargetDurable, r
 import { sweepLockDebris } from './lock.mjs'
 import { fileState, targetKey, sha256, modeOf } from './state.mjs'
 import { parseOpLog, reduceOps, classifyTarget } from './reducer.mjs'
+import { validateManifest, validateOutcome, validateConflictReport } from './schema.mjs'
 
 const ALLOWED = new Set(['package.json','pnpm-lock.yaml','cordis.patch.yml','.cordis-mp/state.json'])
 
@@ -35,7 +36,8 @@ export class Journal {
     return txid
   }
 
-  #loadManifest(tx){ const m = readJsonIfExists(join(this.#txDir(tx),'manifest.json')); if(!m) throw new JournalError('NO_MANIFEST','no manifest'); return m }
+  #loadManifest(tx){ const raw = readJsonIfExists(join(this.#txDir(tx),'manifest.json')); if(!raw) throw new JournalError('NO_MANIFEST','no manifest')
+    try { return validateManifest(raw) } catch(e) { throw new JournalError('BAD_MANIFEST', e.message) } }
   #opsPath(tx,rel){ return join(this.#txDir(tx),'ops',targetKey(rel)+'.jsonl') }
   #parseTarget(tx,rel){ const p=this.#opsPath(tx,rel); const lines=existsSync(p)?readFileSync(p,'utf8').split('\n'):[]
     try { return parseOpLog(lines, { txid:tx, rel }) } catch(e) { throw new JournalError(e.code ?? 'BAD_OP', e.message) } }
@@ -104,8 +106,8 @@ export class Journal {
     const reportPath=join(this.root,'conflicts',tx,'report.json')
     if(!existsSync(reportPath)) return 'none'
     let report
-    try { report=JSON.parse(readFileSync(reportPath,'utf8')) } catch { return 'bad-report' }
-    if(!report || report.v!==1 || report.txid!==tx || !Array.isArray(report.conflicts)) return 'bad-report'
+    try { report=validateConflictReport(JSON.parse(readFileSync(reportPath,'utf8'))) } catch { return 'bad-report' }
+    if(report.txid!==tx) return 'bad-report'
     const ev=join(this.root,'conflicts',tx,'evidence')
     if(Array.isArray(report.evidence)){
       for(const e of report.evidence){
@@ -133,11 +135,11 @@ export class Journal {
   scan(){ const out={txs:[]}; if(!existsSync(this.txDir)) return out
     for(const tx of readdirSync(this.txDir)){ const d=join(this.txDir,tx); if(!statSync(d).isDirectory()) continue
       let m=null, manifestInvalid=false
-      try { m=readJsonIfExists(join(d,'manifest.json')) } catch { manifestInvalid=true }
+      try { const raw=readJsonIfExists(join(d,'manifest.json')); if(raw) m=validateManifest(raw) } catch { manifestInvalid=true }
       const committed=existsSync(join(d,'COMMITTED'))
       let outcome=null, outcomeInvalid=false
       const op=join(d,'OUTCOME.json')
-      if(existsSync(op)){ try{ outcome=JSON.parse(readFileSync(op,'utf8')) }catch{ outcomeInvalid=true } }
+      if(existsSync(op)){ try{ outcome=validateOutcome(JSON.parse(readFileSync(op,'utf8'))) }catch{ outcomeInvalid=true } }
       out.txs.push({txid:tx, manifest:m, manifestInvalid, committed, outcome, outcomeInvalid}) }
     return out }
 
@@ -185,7 +187,8 @@ export class Journal {
           if(v.pending || cur.hash!==v.owned.hash || cur.exists!==v.owned.exists) bad.push(rel)
         }
         if(bad.length){ await this.archiveConflict(p.t.txid,bad.map(rel=>({rel,state:fileState(this.#profilePath(rel))}))); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue }
-        if(p.t.outcomeInvalid || (p.t.outcome && (p.t.outcome.v!==1 || p.t.outcome.txid!==p.t.txid || p.t.outcome.outcome!=='COMMITTED'))){ report.push({txid:p.t.txid,result:'BAD_OUTCOME'}); continue }
+        if(p.t.outcomeInvalid){ report.push({txid:p.t.txid,result:'BAD_OUTCOME'}); continue }
+        if(p.t.outcome && p.t.outcome.outcome!=='COMMITTED'){ report.push({txid:p.t.txid,result:'BAD_OUTCOME'}); continue }
         if(!p.t.outcome) atomicFile(join(this.#txDir(p.t.txid),'OUTCOME.json'), JSON.stringify({v:1,txid:p.t.txid,outcome:'COMMITTED'}),{mode:0o600})
         tombstone('journal', this.#txDir(p.t.txid))
         report.push({txid:p.t.txid,result:'COMMITTED_OK'})
