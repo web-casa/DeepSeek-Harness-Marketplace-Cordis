@@ -16,4 +16,5 @@
 - S2 完成：普通事务 begin/writePresent/delete/commitFiles/recover + 10 tests
 - S4 部分完成：exclusive acquire / takeover CAS / heartbeat+fencing + 5 tests
 - S3 完成：ResolutionJournal restore/accept/supersede/cleanup + 8 tests
-- S5/S6 TODO
+- S5a 完成：严格 reducer + deterministic failpoints + 42 tests
+- S5b/S6 TODO

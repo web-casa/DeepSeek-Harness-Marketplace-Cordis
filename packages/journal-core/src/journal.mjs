@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { atomicFile, appendRecord, marker, replaceTarget, unlinkTargetDurable, readJsonIfExists, tombstone } from './durable.mjs'
 import { fileState, targetKey, sha256, modeOf } from './state.mjs'
+import { parseOpLog, classifyTarget } from './reducer.mjs'
 
 const ALLOWED = new Set(['package.json','pnpm-lock.yaml','cordis.patch.yml','.cordis-mp/state.json'])
 
@@ -35,13 +36,10 @@ export class Journal {
   #readOps(tx,rel){
     const p=this.#opsPath(tx,rel); if(!existsSync(p)) return []
     const lines=readFileSync(p,'utf8').split('\n')
-    const ops=[]
-    lines.forEach((line,i)=>{ if(!line) return
-      let op; try{ op=JSON.parse(line) }catch{ if(i===lines.length-1) return; throw new JournalError('BAD_OP','bad op line '+i) }
-      if(op.v!==1||op.txid!==tx||op.targetKey!==targetKey(rel)||!['INTENDED','CONFIRMED','CANCELLED'].includes(op.phase)) throw new JournalError('BAD_OP','invalid op record')
-      ops.push(op) })
-    return ops
+    try { return parseOpLog(lines, { txid:tx, rel }).records } catch(e) { throw new JournalError(e.code ?? 'BAD_OP', e.message) }
   }
+  #parseTarget(tx,rel){ const p=this.#opsPath(tx,rel); const lines=existsSync(p)?readFileSync(p,'utf8').split('\n'):[]
+    try { return parseOpLog(lines, { txid:tx, rel }) } catch(e) { throw new JournalError(e.code ?? 'BAD_OP', e.message) } }
   #ownedBefore(tx,rel){ const m=this.#loadManifest(tx); const before=m.targets[rel].state; let owned=before
     for(const op of this.#readOps(tx,rel)){ if(op.phase==='CONFIRMED') owned=op.next }
     return owned }
@@ -165,7 +163,14 @@ export class Journal {
       }
       for(const rel of rollback){
         try{ await this.#rollbackTarget(p.t.txid,rel,p.m) }
-        catch(e){ await this.archiveConflict(p.t.txid,[{rel,state:fileState(this.#profilePath(rel))}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); return report }
+        catch(e){ if(e.code==='FP_INJECTED') throw e; await this.archiveConflict(p.t.txid,[{rel,state:fileState(this.#profilePath(rel))}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); return report }
+      }
+      // 最终复核：所有 target 必须等于 baseline 才允许宣告 ROLLED_BACK
+      for(const rel of Object.keys(p.m.targets)){
+        const cur=fileState(this.#profilePath(rel)); const b=p.m.targets[rel].state
+        if(cur.exists!==b.exists || cur.hash!==b.hash){
+          await this.archiveConflict(p.t.txid,[{rel,state:cur}]); report.push({txid:p.t.txid,result:'CONFLICTED'}); return report
+        }
       }
       atomicFile(join(this.#txDir(p.t.txid),'OUTCOME.json'), JSON.stringify({v:1,txid:p.t.txid,outcome:'ROLLED_BACK'}),{mode:0o600})
       report.push({txid:p.t.txid,result:'ROLLED_BACK'})
@@ -174,17 +179,10 @@ export class Journal {
   }
 
   #classify(tx,rel,baseline){
-    const current=fileState(this.#profilePath(rel)); const ops=this.#readOps(tx,rel)
-    let owned=baseline.state
-    for(const op of ops){ if(op.phase==='CONFIRMED') owned=op.next }
-    const pending=ops.length && ops[ops.length-1].phase==='INTENDED' ? ops[ops.length-1] : null
-    if(pending){
-      if(current.hash===pending.expected.hash&&current.exists===pending.expected.exists) return {conflict:false,current,owned,pending,pendingAction:'CANCELLED'}
-      if(current.hash===pending.next.hash&&current.exists===pending.next.exists) return {conflict:false,current,owned:pending.next,pending,pendingAction:'CONFIRMED'}
-      return {conflict:true,current,owned,pending,pendingAction:null}
-    }
-    if(current.hash!==owned.hash||current.exists!==owned.exists) return {conflict:true,current,owned,pending:null,pendingAction:null}
-    return {conflict:false,current,owned,pending:null,pendingAction:null}
+    const current=fileState(this.#profilePath(rel))
+    const parsed=this.#parseTarget(tx,rel)
+    const plan=classifyTarget(parsed, baseline, current)
+    return { ...plan, current }
   }
 
   async #rollbackTarget(tx,rel,m){
@@ -201,6 +199,8 @@ export class Journal {
     } else {
       const op=this.#beginOp(tx,rel,{kind:'ROLLBACK',expected:owned,next:baseline.state})
       this.lock?.fence(); unlinkTargetDurable(p)
+      const after=fileState(p)
+      if(after.exists!==false) throw new JournalError('CONFLICT','rollback delete post-check failed: '+rel)
       this.#appendPhase(tx,rel,op,'CONFIRMED')
     }
   }
