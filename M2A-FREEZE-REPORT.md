@@ -1,4 +1,4 @@
-# M2a Freeze Report（S6 收口）
+# M2a Freeze Report（S9 收口，P1 修复后）
 
 ## 结论
 **POSIX FULL 平台范围：10/10 gate 关闭，JOURNAL-SPEC v7 working draft 可冻结为 v1.0-final（条件冻结）。**
@@ -19,12 +19,17 @@ Windows 平台为 BEST_EFFORT，需 Windows CI 实证后才可宣称 FULL。
 | G10 故障注入闭环 | **CLOSED** | 全点 deterministic exit(43) + SIGKILL 双轨代表场景；不变量测试通过 |
 
 ## 测试
-- 66 tests / 66 pass
-- `node --test test/*.test.mjs`
+- 92 tests / 92 pass
+- 从 packages/journal-core 目录运行：`node --test test/*.test.mjs`（或 `npm test`）
 
-## 待办（下一轮）
-1. G1/G2 补 supersede 两阶段与逐祖先 tombstone 的子进程崩溃测试。
-2. G6/G10 将 durable primitive 每个 failpoint 点与矩阵场景对齐，补全 after-file-fsync / before-dirfsync 等。
-3. G7 抽取统一 schema 校验模块。
-4. G5 若需严格关闭，改由 JournalPort 内部调用 BaselineValidator，不暴露 recordValidation。
-5. Windows BEST_EFFORT 路径在 Windows CI 验证。
+## 已完成的原待办
+- [x] G1/G2 supersede 两阶段与逐祖先 tombstone 子进程崩溃测试
+- [x] G6/G10 durable failpoint 点与矩阵场景全量对齐（FAILPOINT-COVERAGE.md）
+- [x] G7 统一 schema 校验模块
+- [x] G5 validator 内部持有（validateAndRecord）
+- [ ] Windows BEST_EFFORT 路径在 Windows CI 验证（仍开放）
+
+## 外部评审后修复（P1）
+- [x] P1-1 ResolutionJournal.recoverReport schema 不匹配（txid/enum 修复）
+- [x] P1-2 sweepTrash 删除新鲜 trash 导致断链祖先 BAD_GRAPH 永久 wedge（sweepTrash 年龄门槛 + 缺失祖先断链语义）
+
