@@ -69,3 +69,42 @@ test('verify failure rolls back written profile files', async () => {
   await assert.rejects(() => c.service.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } }), e => e.code === 'VERIFY_FAILED')
   assert.equal(readFileSync(join(c.profile, 'package.json'), 'utf8'), '{"old":true}')
 })
+
+test('M2b: pre-disable happens before install; activation is pending', async () => {
+  const c = setup()
+  const order = []
+  c.packageManager.installVerifiedArtifact = async () => { order.push('install'); return { exitCode: 0, profileFiles: { 'package.json': Buffer.from('{"new":true}') } } }
+  const activation = {
+    async prepareDisable() { order.push('prepare'); return { entryIds: ['entry-1'] } },
+    async preDisable() { order.push('pre-disable') },
+    async cancelDisable() { order.push('cancel') },
+    async activate() { order.push('activate'); return { status: 'ACTIVE' } },
+  }
+  const svc = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation })
+  const out = await svc.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } })
+  assert.equal(out.pendingActivation, true)
+  assert.deepEqual(order.slice(0, 3), ['prepare', 'pre-disable', 'install'])
+  const act = await svc.activate({ slug: 'p' })
+  assert.equal(act.status, 'ACTIVE')
+  assert.equal(order.includes('activate'), true)
+})
+
+test('M2b: failed install cancels pre-disable', async () => {
+  const c = setup()
+  c.packageManager.installVerifiedArtifact = async () => ({ exitCode: 1, stderr: 'boom' })
+  let cancelled = false
+  const activation = {
+    async prepareDisable() { return { entryIds: ['entry-1'] } },
+    async preDisable() {},
+    async cancelDisable() { cancelled = true },
+    async activate() {},
+  }
+  const svc = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation })
+  await assert.rejects(() => svc.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } }), e => e.code === 'INSTALL_FAILED')
+  assert.equal(cancelled, true)
+})
+
+test('activate without pending is rejected', async () => {
+  const c = setup()
+  await assert.rejects(() => c.service.activate({ slug: 'nope' }), e => e.code === 'NO_PENDING_ACTIVATION')
+})

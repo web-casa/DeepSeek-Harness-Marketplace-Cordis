@@ -40,6 +40,11 @@ export function createMutationHandler({ installService, platform = 'web', guard 
         const out = await installService.uninstall({ packageName: body.name })
         return json(res, 200, { ok: true, ...out })
       }
+      if (url.pathname === '/cordis-mp/activate') {
+        const body = await readJsonBody(req)
+        const out = await installService.activate({ slug: body.slug })
+        return json(res, 200, { ok: true, ...out })
+      }
       json(res, 404, { error: { code: 'NOT_FOUND', message: 'no such route' } })
     } catch (e) {
       if (e instanceof InstallError) return json(res, 400, { error: { code: e.code, message: e.message } })
@@ -54,6 +59,7 @@ export function mountMutationRoutes(webServer, opts) {
   const disposers = [
     webServer.register({ kind: 'exact', path: '/cordis-mp/install', handler }),
     webServer.register({ kind: 'exact', path: '/cordis-mp/uninstall', handler }),
+    webServer.register({ kind: 'exact', path: '/cordis-mp/activate', handler }),
     webServer.register({ kind: 'exact', path: '/cordis-mp/status', handler }),
   ]
   return () => { for (const d of disposers) d() }

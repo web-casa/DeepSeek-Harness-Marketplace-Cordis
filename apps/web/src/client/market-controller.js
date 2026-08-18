@@ -10,6 +10,7 @@ export function createMarketController(api) {
       return body.plugin
     },
     install(slug, entryRevision) { return api.install({ slug, entryRevision }) },
+    activate(slug) { return api.activate({ slug }) },
     uninstall(name) { return api.uninstall({ name }) },
     status() { return api.status() },
   }

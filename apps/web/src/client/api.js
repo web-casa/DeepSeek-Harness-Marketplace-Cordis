@@ -38,6 +38,7 @@ export function createMarketApi({ fetchImpl = globalThis.fetch, base = '' } = {}
     async detail(slug) { return json(await fetchImpl(`${base}/cordis-mp/plugin/${encodeURIComponent(slug)}`)) },
     async status() { return json(await fetchImpl(`${base}/cordis-mp/status`)) },
     install: payload => mutation('/cordis-mp/install', payload),
+    activate: payload => mutation('/cordis-mp/activate', payload),
     uninstall: payload => mutation('/cordis-mp/uninstall', payload),
   }
 }

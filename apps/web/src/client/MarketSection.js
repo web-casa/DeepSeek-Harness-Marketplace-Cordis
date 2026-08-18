@@ -8,6 +8,7 @@ export function MarketSection({ close, controller }) {
   const [error, setError] = React.useState(null)
   const [loading, setLoading] = React.useState(false)
   const [busySlug, setBusySlug] = React.useState(null)
+  const [pendingSlug, setPendingSlug] = React.useState(null)
 
   async function load(value = q) {
     setLoading(true); setError(null)
@@ -20,8 +21,13 @@ export function MarketSection({ close, controller }) {
   React.useEffect(() => { load('') }, [])
 
   async function install(item) {
+    if (globalThis.confirm && !globalThis.confirm(`确认安装插件 ${item.name}？安装后默认禁用，需手动启用。`)) return
     setBusySlug(item.slug)
-    try { await controller.install(item.slug, item.entryRevision) } catch (e) { setError(e.message) } finally { setBusySlug(null) }
+    try { await controller.install(item.slug, item.entryRevision); setPendingSlug(item.slug) } catch (e) { setError(e.message) } finally { setBusySlug(null) }
+  }
+  async function activate(item) {
+    setBusySlug(item.slug)
+    try { await controller.activate(item.slug); setPendingSlug(null) } catch (e) { setError(e.message) } finally { setBusySlug(null) }
   }
 
   return React.createElement('div', { className: 'cordis-mp-market', 'data-testid': 'cordis-mp-market' },
@@ -38,7 +44,9 @@ export function MarketSection({ close, controller }) {
           React.createElement('span', { className: 'cordis-mp-desc' }, item.description?.zh || ''),
           React.createElement('span', { className: 'cordis-mp-platforms' }, (item.platforms || []).join('/')),
         ),
-        React.createElement('button', { disabled: busySlug === item.slug, onClick: () => install(item) }, busySlug === item.slug ? '安装中…' : '安装'),
+        pendingSlug === item.slug
+          ? React.createElement('button', { disabled: busySlug === item.slug, onClick: () => activate(item) }, busySlug === item.slug ? '启用中…' : '启用')
+          : React.createElement('button', { disabled: busySlug === item.slug, onClick: () => install(item) }, busySlug === item.slug ? '安装中…' : '安装'),
       )),
     ),
   )

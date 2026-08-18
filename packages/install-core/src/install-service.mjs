@@ -11,6 +11,7 @@ export class InstallService {
     this.journal = journal
     this.packageManager = packageManager
     this.activation = activation
+    this.pending = new Map()
   }
 
   async install({ slug, platform = 'web', confirmation = {}, signal } = {}) {
@@ -28,6 +29,12 @@ export class InstallService {
       tarball: fresh.source.tarball,
       registry: fresh.source.registry,
     }
+    // M2b：PRE_DISABLE 在安装前执行；失败时撤销。
+    let disable = null
+    if (this.activation) {
+      disable = await this.activation.prepareDisable({ slug, artifact })
+      if (disable?.entryIds?.length) await this.activation.preDisable(disable.entryIds)
+    }
     const tx = await this.journal.begin(TRACKED_FILES)
     try {
       const result = await this.packageManager.installVerifiedArtifact(artifact, signal)
@@ -41,13 +48,22 @@ export class InstallService {
     } catch (e) {
       if (e.code === 'FP_INJECTED') throw e
       try { await this.journal.recover() } catch {}
+      if (disable?.entryIds?.length) { try { await this.activation.cancelDisable(disable.entryIds) } catch {} }
       throw e
     }
+    const pending = { slug, artifact, entryIds: disable?.entryIds || [], entryRevision: fresh.entryRevision, tx }
+    this.pending.set(slug, pending)
+    return { status: 'COMMITTED', pendingActivation: true, pending }
+  }
+
+  async activate({ slug, signal } = {}) {
+    const pending = this.pending.get(slug)
+    if (!pending) throw new InstallError('NO_PENDING_ACTIVATION', 'no pending activation for slug: ' + slug)
+    if (!this.activation) throw new InstallError('NO_ACTIVATION_PORT', 'activation port is not configured')
     let activationStatus = null
-    if (this.activation) {
-      activationStatus = await this.activation.requestActivation({ slug, artifact }, signal)
-    }
-    return { status: 'COMMITTED', activationStatus, tx }
+    if (pending.entryIds.length) activationStatus = await this.activation.activate(pending.entryIds, signal)
+    this.pending.delete(slug)
+    return { status: 'ACTIVE', activationStatus }
   }
 
   async uninstall({ packageName, signal } = {}) {
