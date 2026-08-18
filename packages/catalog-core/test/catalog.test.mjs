@@ -1,0 +1,96 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import { CatalogClient, CatalogError, installability } from '../src/index.js'
+
+const catalog = {
+  schemaVersion: 1,
+  catalogRevision: 'rev-1',
+  updated: '2026-08-18T00:00:00Z',
+  count: 2,
+  page: { cursor: '1', hasMore: false, limit: 50 },
+  items: [
+    { slug: 'a', name: 'a', description: { zh: 'A', en: 'A' }, category: 'cat',
+      source: { type: 'npm', packageName: 'a', version: '1.0.0', integrity: 'sha512-AAAA', registry: 'https://registry.npmjs.org', tarball: 'https://registry.npmjs.org/a/-/a-1.0.0.tgz' },
+      platforms: ['web','desktop'], engines: { dsh: '>=0.1.0-rc.6 <0.2.0' }, stars: 1, blocked: false },
+    { slug: 'b', name: 'b', description: { zh: 'B', en: 'B' }, category: 'cat',
+      source: { type: 'npm', packageName: 'b', version: '1.0.0', integrity: 'sha512-BBBB', registry: 'https://registry.npmjs.org', tarball: 'https://registry.npmjs.org/b/-/b-1.0.0.tgz' },
+      platforms: ['desktop'], engines: { dsh: '>=0.1.0-rc.6 <0.2.0' }, stars: 2, blocked: false },
+  ],
+}
+function fakeResponse(status, body, headers = {}) {
+  return { status, ok: status >= 200 && status < 300, headers: { get: k => headers[k] ?? null }, text: async () => JSON.stringify(body) }
+}
+function clientWith(impl) { return new CatalogClient({ fetchImpl: impl }) }
+
+test('list parses contract response', async () => {
+  const c = clientWith(async () => fakeResponse(200, catalog, { etag: '"e1"' }))
+  const res = await c.list({ platform: 'desktop' })
+  assert.equal(res.count, 2)
+  assert.equal(res.items.length, 2)
+  assert.equal(res.catalogRevision, 'rev-1')
+  assert.equal(c.installability(res.items[0], 'desktop').installable, true)
+  assert.equal(c.installability(res.items[1], 'web').installable, false)
+})
+
+test('ETag 304 uses cache', async () => {
+  let calls = 0
+  const c = clientWith(async (url, init) => {
+    calls++
+    if (calls === 1) return fakeResponse(200, catalog, { etag: '"e1"' })
+    assert.equal(init.headers['if-none-match'], '"e1"')
+    return fakeResponse(304, {})
+  })
+  await c.list()
+  const r = await c.list()
+  assert.equal(r.source, 'cache')
+})
+
+test('error body is parsed', async () => {
+  const c = clientWith(async () => fakeResponse(404, { error: { code: 'NOT_FOUND', message: 'no such slug' } }))
+  await assert.rejects(() => c.detail('nope'), e => e instanceof CatalogError && e.code === 'NOT_FOUND' && e.message === 'no such slug' && e.status === 404)
+})
+
+test('network failure falls back to snapshot', async () => {
+  const c = new CatalogClient({ fetchImpl: async () => { throw new Error('down') }, snapshot: catalog })
+  const res = await c.list({ platform: 'desktop' })
+  assert.equal(res.source, 'snapshot')
+  assert.equal(res.items.length, 2)
+})
+
+test('legacy flat item and page number are normalized', async () => {
+  const legacy = { schemaVersion: 1, catalogRevision: 'r', total: 1, page: 1, per_page: 30, items: [
+    { slug: 'legacy', name: 'legacy', npm: 'legacy', version: '2.0.0', integrity: 'sha512-CCCC', description: 'Legacy text', platforms: ['web'] }
+  ]}
+  const c = clientWith(async () => fakeResponse(200, legacy))
+  const res = await c.list()
+  assert.equal(res.page.cursor, '1'); assert.equal(res.page.limit, 30)
+  assert.equal(res.items[0].description.zh, 'Legacy text')
+  assert.equal(res.items[0].source.packageName, 'legacy')
+})
+
+test('fixture server integration: list/detail/error', async () => {
+  const fixture = fileURLToPath(new URL('../../../spikes/S1/fixture-server.mjs', import.meta.url))
+  const child = spawn(process.execPath, [fixture], { stdio: ['ignore', 'pipe', 'pipe'] })
+  let out = '', err = ''
+  child.stdout.on('data', d => out += d)
+  child.stderr.on('data', d => err += d)
+  for (let i = 0; i < 20 && !out.includes('\n'); i++) await new Promise(r => setTimeout(r, 50))
+  assert.ok(out.includes('\n'), 'fixture server did not start; err=' + err + ' fixture=' + fixture)
+  const port = out.trim().split('\n')[0]
+  try {
+    const c = new CatalogClient({ baseUrl: `http://127.0.0.1:${port}/api/v1` })
+    const list = await c.list({ platform: 'desktop', page: 1, perPage: 1 })
+    assert.equal(list.source, 'network')
+    assert.equal(list.count, 2)
+    assert.equal(list.items.length, 1)
+    assert.equal(list.page.hasMore, true)
+    const detail = await c.detail('dsh-market')
+    assert.equal(detail.source.type, 'npm')
+    assert.equal(detail.screenshots.length, 1)
+    await assert.rejects(() => c.detail('not-exist'), e => e.code === 'NOT_FOUND')
+  } finally {
+    child.kill()
+  }
+})
