@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { Journal, JournalError, FileLock, LockBusy, sha256 } from '../src/index.js'
+import { setFailpoint, clearFailpoints } from '../src/failpoints.mjs'
 
 function make(){
   const base=mkdtempSync(join(tmpdir(),'jm-'))
@@ -47,13 +48,14 @@ test('delete and rollback restores present', async ()=>{
   assert.equal(readFileSync(join(profile,'package.json'),'utf8'),'A0')
 })
 
-test('pending INTENDED (crash after write before CONFIRMED) is claimed and rolled back', async ()=>{
-  const {j,profile,journalRoot}=make()
+test('pending INTENDED (crash before CONFIRMED append) is claimed and rolled back', async ()=>{
+  const {j,profile}=make()
   const tx=await j.begin(['package.json'])
-  await j.writePresent(tx,'package.json',Buffer.from('A1'))
-  // 删掉最后的 CONFIRMED 行，模拟写后未确认崩溃
-  const ops=join(journalRoot,'journal',tx,'ops',createHash('sha256').update('package.json').digest('hex')+'.jsonl')
-  const lines=readFileSync(ops,'utf8').trim().split('\n'); lines.pop(); writeFileSync(ops,lines.join('\n')+'\n')
+  // 用 failpoint 在 CONFIRMED append 前模拟崩溃：第一次 append 放行，第二次注入
+  let n=0
+  setFailpoint('appendRecord:before', ()=>{ n++; if(n===2){ const e=new Error('fp-before-confirm'); e.code='FP_INJECTED'; throw e } })
+  await assert.rejects(()=>j.writePresent(tx,'package.json',Buffer.from('A1')), e=>e.code==='FP_INJECTED')
+  clearFailpoints()
   const report=await j.recover()
   assert.equal(report[0].result,'ROLLED_BACK')
   assert.equal(readFileSync(join(profile,'package.json'),'utf8'),'A0')

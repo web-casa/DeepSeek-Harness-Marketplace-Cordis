@@ -79,3 +79,32 @@ test('trailing truncated JSONL line is tolerated', ()=>{
   const parsed=parseOpLog([JSON.stringify(rec({seq:1,phase:'INTENDED'})), '{"broken"'],{txid:'tx1',rel:'pkg'})
   assert.equal(parsed.truncatedTail,true)
 })
+
+test('physical out-of-order sequence rejected', ()=>{
+  assert.throws(()=>parseOpLog([
+    JSON.stringify(rec({seq:2,phase:'INTENDED'})),
+    JSON.stringify(rec({seq:1,phase:'INTENDED'}))],{txid:'tx1',rel:'pkg'}), e=>e.code==='BAD_OP')
+})
+
+test('interleaved terminal phase rejected', ()=>{
+  assert.throws(()=>parseOpLog([
+    JSON.stringify(rec({seq:1,phase:'INTENDED'})),
+    JSON.stringify(rec({seq:2,phase:'INTENDED'})),
+    JSON.stringify(rec({seq:1,phase:'CONFIRMED'}))],{txid:'tx1',rel:'pkg'}), e=>e.code==='BAD_OP')
+})
+
+test('double pending rejected', ()=>{
+  assert.throws(()=>parseOpLog([
+    JSON.stringify(rec({seq:1,phase:'INTENDED'})),
+    JSON.stringify(rec({seq:2,phase:'INTENDED'}))],{txid:'tx1',rel:'pkg'}), e=>e.code==='BAD_OP')
+})
+
+test('absent next state is valid and rollback-required compares exists/hash', ()=>{
+  const lines=[
+    JSON.stringify(rec({seq:1,phase:'INTENDED',next:{exists:false,hash:null}})),
+    JSON.stringify(rec({seq:1,phase:'CONFIRMED',next:{exists:false,hash:null}})),
+  ]
+  const parsed=parseOpLog(lines,{txid:'tx1',rel:'pkg'})
+  const r=reduceOps(parsed,baseline)
+  assert.equal(r.owned.exists,false)
+})

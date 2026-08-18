@@ -1,25 +1,36 @@
-// 严格纯函数 op 链归约：JournalEvidence -> ValidationResult
-// 不做任何 I/O；调用方负责提供 records 与 baseline。
+// 严格纯函数 op 链归约：按物理行顺序解析，不排序修复证据。
 import { targetKey } from './state.mjs'
 
 const PHASES = ['INTENDED', 'CONFIRMED', 'CANCELLED']
 const KINDS = ['FORWARD', 'ROLLBACK']
+const HASH_RE = /^sha256:[0-9a-f]{64}$/
 
 function validFileState(s) {
   if (!s || typeof s !== 'object' || typeof s.exists !== 'boolean') return false
-  if (s.exists) return typeof s.hash === 'string' && s.hash.startsWith('sha256:') && s.hash.length === 7 + 64
-  return s.hash === null || s.hash === undefined
+  if (s.exists) return typeof s.hash === 'string' && HASH_RE.test(s.hash)
+  return s.hash === null
 }
 function sameState(a, b) { return a && b && a.exists === b.exists && a.hash === b.hash }
 
+function validateCommon(op, { txid, rel }) {
+  if (op.v !== 1) throw { code: 'BAD_OP', message: 'op v != 1' }
+  if (op.txid !== txid) throw { code: 'BAD_OP', message: 'op txid mismatch' }
+  if (op.targetKey !== targetKey(rel)) throw { code: 'BAD_OP', message: 'op targetKey mismatch' }
+  if (!PHASES.includes(op.phase)) throw { code: 'BAD_OP', message: 'bad phase' }
+  if (!KINDS.includes(op.kind)) throw { code: 'BAD_OP', message: 'bad kind' }
+  if (!Number.isInteger(op.seq) || op.seq < 1) throw { code: 'BAD_OP', message: 'bad seq' }
+  if (op.opId !== `${txid}-${op.seq}`) throw { code: 'BAD_OP', message: 'opId/seq mismatch' }
+  if (!validFileState(op.expected) || !validFileState(op.next) || !validFileState(op.before)) throw { code: 'BAD_OP', message: 'bad file state' }
+}
+
 /**
- * 解析并验证一个 target 的 op JSONL。
- * 返回 { records, groups, owned, pending, truncatedTail }
- * 任何结构错误抛出 { code:'BAD_OP', message }。
+ * 物理顺序解析：INTENDED 后必须紧接同一 opId 的 terminal phase；
+ * 只有日志最后一条 INTENDED 可以 pending；seq 必须按物理顺序连续递增。
  */
 export function parseOpLog(lines, { txid, rel }) {
-  const key = targetKey(rel)
-  const groups = new Map()
+  const groups = []
+  let current = null
+  let expectedSeq = 1
   let truncatedTail = false
   lines.forEach((line, index) => {
     if (line === '') return
@@ -28,62 +39,48 @@ export function parseOpLog(lines, { txid, rel }) {
       if (index === lines.length - 1) { truncatedTail = true; return }
       throw { code: 'BAD_OP', message: `bad json line ${index}` }
     }
-    if (op.v !== 1) throw { code: 'BAD_OP', message: 'op v != 1' }
-    if (op.txid !== txid) throw { code: 'BAD_OP', message: 'op txid mismatch' }
-    if (op.targetKey !== key) throw { code: 'BAD_OP', message: 'op targetKey mismatch' }
-    if (!PHASES.includes(op.phase)) throw { code: 'BAD_OP', message: 'bad phase' }
-    if (!KINDS.includes(op.kind)) throw { code: 'BAD_OP', message: 'bad kind' }
-    if (!Number.isInteger(op.seq) || op.seq < 1) throw { code: 'BAD_OP', message: 'bad seq' }
-    if (op.opId !== `${txid}-${op.seq}`) throw { code: 'BAD_OP', message: 'opId/seq mismatch' }
-    if (!validFileState(op.expected) || !validFileState(op.next) || !validFileState(op.before)) throw { code: 'BAD_OP', message: 'bad file state' }
-    const g = groups.get(op.opId)
-    if (!g) { if (op.phase !== 'INTENDED') throw { code: 'BAD_OP', message: 'first phase must be INTENDED' }; groups.set(op.opId, [op]) } else {
-      const first = g[0]
-      if (g.length >= 2) throw { code: 'BAD_OP', message: 'more than 2 phases for op' }
-      if (first.phase === op.phase) throw { code: 'BAD_OP', message: 'duplicate phase' }
-      if (!['CONFIRMED', 'CANCELLED'].includes(op.phase)) throw { code: 'BAD_OP', message: 'bad second phase' }
-      for (const k of ['seq', 'opId', 'kind', 'expected', 'next', 'before', 'mode', 'length', 'v', 'txid', 'targetKey']) {
-        if (JSON.stringify(first[k]) !== JSON.stringify(op[k])) throw { code: 'BAD_OP', message: `phase records differ: ${k}` }
-      }
-      g.push(op)
+    validateCommon(op, { txid, rel })
+    if (op.phase === 'INTENDED') {
+      if (op.seq !== expectedSeq) throw { code: 'BAD_OP', message: `physical seq gap: expected ${expectedSeq} got ${op.seq}` }
+      if (current && current.length === 1) throw { code: 'BAD_OP', message: 'unresolved op before new INTENDED' }
+      current = [op]
+      groups.push(current)
+      expectedSeq = op.seq + 1
+      return
     }
+    // terminal phase
+    if (!current) throw { code: 'BAD_OP', message: 'terminal phase without INTENDED' }
+    if (current[0].opId !== op.opId || current[0].seq !== op.seq) throw { code: 'BAD_OP', message: 'terminal opId/seq mismatch' }
+    if (current.length >= 2) throw { code: 'BAD_OP', message: 'duplicate terminal phase' }
+    for (const k of ['seq', 'opId', 'kind', 'expected', 'next', 'before', 'mode', 'length', 'v', 'txid', 'targetKey']) {
+      if (JSON.stringify(current[0][k]) !== JSON.stringify(op[k])) throw { code: 'BAD_OP', message: `phase records differ: ${k}` }
+    }
+    current.push(op)
   })
-  // 按 seq 排序并验证连续
-  const seqs = [...groups.keys()].map(k => groups.get(k)[0].seq).sort((a, b) => a - b)
-  seqs.forEach((seq, i) => { if (seq !== i + 1) throw { code: 'BAD_OP', message: `seq gap: expected ${i + 1} got ${seq}` } })
-  const records = seqs.flatMap(seq => groups.get(`${txid}-${seq}`))
+  const records = groups.flat()
   return { records, groups, truncatedTail }
 }
 
 /**
- * 纯逻辑归约：验证 op 链并计算 owned / pending。
+ * 纯逻辑归约：before 恒等于 baseline；expected 按前一 owned 串链；
+ * ROLLBACK.next 必须回到 baseline。
  */
 export function reduceOps(parsed, baseline) {
-  const { records, groups } = parsed
+  const { groups } = parsed
   let owned = baseline.state
-  let first = true
-  let index = 0
-  const groupList = [...groups.values()]
-  for (const group of groupList) {
-    index++
-    if (index < groupList.length && group.length !== 2) throw { code: 'BAD_OP', message: 'unresolved op before last' }
-
+  groups.forEach((group, idx) => {
     const op = group[0]
-    if (op.before.exists !== baseline.state.exists || op.before.hash !== baseline.state.hash) throw { code: 'BAD_OP', message: 'op before != baseline' }
+    if (!sameState(op.before, baseline.state)) throw { code: 'BAD_OP', message: 'op before != baseline' }
     if (op.kind === 'ROLLBACK' && !sameState(op.next, baseline.state)) throw { code: 'BAD_OP', message: 'rollback next != baseline' }
-    const expected = first ? baseline.state : owned
-    if (!sameState(op.expected, expected)) throw { code: 'BAD_OP', message: 'expected chain mismatch' }
-    first = false
+    if (!sameState(op.expected, owned)) throw { code: 'BAD_OP', message: 'expected chain mismatch' }
     const final = group[group.length - 1]
     if (final.phase === 'CONFIRMED') owned = final.next
-  }
-  const pending = records.length && records[records.length - 1].phase === 'INTENDED' ? records[records.length - 1] : null
-  return { owned, pending, records, groups }
+  })
+  const last = groups.length ? groups[groups.length - 1] : null
+  const pending = last && last.length === 1 && last[0].phase === 'INTENDED' ? last[0] : null
+  return { owned, pending, records: parsed.records, groups }
 }
 
-/**
- * 物理 current 判定，返回不可变 RecoveryTargetPlan。
- */
 export function classifyTarget(parsed, baseline, current) {
   const { owned, pending } = reduceOps(parsed, baseline)
   if (pending) {
@@ -95,6 +92,4 @@ export function classifyTarget(parsed, baseline, current) {
   return { conflict: false, owned, pending: null, pendingAction: null }
 }
 
-export function rollbackRequired(plan, baseline) {
-  return !sameState(plan.owned, baseline.state)
-}
+export function rollbackRequired(plan, baseline) { return !sameState(plan.owned, baseline.state) }

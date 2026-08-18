@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { atomicFile, appendRecord, marker, replaceTarget, unlinkTargetDurable, readJsonIfExists, tombstone } from './durable.mjs'
 import { fileState, targetKey, sha256, modeOf } from './state.mjs'
-import { parseOpLog, classifyTarget } from './reducer.mjs'
+import { parseOpLog, reduceOps, classifyTarget } from './reducer.mjs'
 
 const ALLOWED = new Set(['package.json','pnpm-lock.yaml','cordis.patch.yml','.cordis-mp/state.json'])
 
@@ -40,13 +40,15 @@ export class Journal {
   }
   #parseTarget(tx,rel){ const p=this.#opsPath(tx,rel); const lines=existsSync(p)?readFileSync(p,'utf8').split('\n'):[]
     try { return parseOpLog(lines, { txid:tx, rel }) } catch(e) { throw new JournalError(e.code ?? 'BAD_OP', e.message) } }
-  #ownedBefore(tx,rel){ const m=this.#loadManifest(tx); const before=m.targets[rel].state; let owned=before
-    for(const op of this.#readOps(tx,rel)){ if(op.phase==='CONFIRMED') owned=op.next }
-    return owned }
+  #validatedTarget(tx,rel){ const parsed=this.#parseTarget(tx,rel); const baseline=this.#loadManifest(tx).targets[rel]
+    return reduceOps(parsed, baseline) }
+  #ownedBefore(tx,rel){ return this.#validatedTarget(tx,rel).owned }
 
   #beginOp(tx, rel, {kind, expected, next, mode, length}){
-    const m=this.#loadManifest(tx); const ops=this.#readOps(tx,rel)
-    const seq=ops.length ? Math.max(...ops.map(o=>o.seq))+1 : 1
+    const m=this.#loadManifest(tx)
+    const v=this.#validatedTarget(tx,rel)
+    if(v.pending) throw new JournalError('PENDING','previous op is pending INTENDED')
+    const seq=v.records.length ? v.records[v.records.length-1].seq + 1 : 1
     const op={v:1,txid:tx,targetKey:targetKey(rel),opId:`${tx}-${seq}`,seq,kind,phase:'INTENDED',expected,next,before:m.targets[rel].state}
     if(next.exists){ op.mode=mode; op.length=length }
     appendRecord(this.#opsPath(tx,rel), JSON.stringify(op))
@@ -85,10 +87,10 @@ export class Journal {
     this.lock?.fence()
     const m=this.#loadManifest(tx)
     for(const rel of Object.keys(m.targets)){
-      const ops=this.#readOps(tx,rel)
-      if(!ops.length||ops[ops.length-1].phase!=='CONFIRMED') throw new JournalError('PENDING','unconfirmed target: '+rel)
-      const current=fileState(this.#profilePath(rel)); const last=ops[ops.length-1]
-      if(current.hash!==last.next.hash||current.exists!==last.next.exists) throw new JournalError('CONFLICT','final check failed: '+rel)
+      const v=this.#validatedTarget(tx,rel)
+      if(v.pending) throw new JournalError('PENDING','unconfirmed target: '+rel)
+      const current=fileState(this.#profilePath(rel))
+      if(current.hash!==v.owned.hash||current.exists!==v.owned.exists) throw new JournalError('CONFLICT','final check failed: '+rel)
     }
     this.lock?.fence(); marker(join(this.#txDir(tx),'COMMITTED'))
     m.state='FILE_COMMITTED'; atomicFile(join(this.#txDir(tx),'manifest.json'), JSON.stringify(m,null,2),{mode:0o600})
@@ -128,21 +130,24 @@ export class Journal {
         pre.push({t, committed:true}); continue
       }
       try{ this.#verifySnapshots(t.txid) }catch(e){ report.push({txid:t.txid,result:e.code}); continue }
-      const m=this.#loadManifest(t.txid); const classified={}; const conflicts=[]
+      const m=this.#loadManifest(t.txid); const classified={}; const conflicts=[]; let bad=false
       for(const rel of Object.keys(m.targets)){
-        const r=this.#classify(t.txid,rel,m.targets[rel]); classified[rel]=r
-        if(r.conflict) conflicts.push({rel,state:r.current})
+        try{ const r=this.#classify(t.txid,rel,m.targets[rel]); classified[rel]=r; if(r.conflict) conflicts.push({rel,state:r.current}) }
+        catch(e){ report.push({txid:t.txid,result:e.code}); bad=true; break }
       }
+      if(bad) continue
       pre.push({t, committed:false, m, classified, conflicts})
     }
     for(const p of pre){
       if(p.committed){
         const m=this.#loadManifest(p.t.txid); const bad=[]
         for(const rel of Object.keys(m.targets)){
-          const ops=this.#readOps(p.t.txid,rel); const last=ops[ops.length-1]; const cur=fileState(this.#profilePath(rel))
-          if(!last || last.phase!=='CONFIRMED' || cur.hash!==last.next.hash || cur.exists!==last.next.exists) bad.push(rel)
+          let v; try{ v=this.#validatedTarget(p.t.txid,rel) }catch(e){ report.push({txid:p.t.txid,result:e.code}); return report }
+          const cur=fileState(this.#profilePath(rel))
+          if(v.pending || cur.hash!==v.owned.hash || cur.exists!==v.owned.exists) bad.push(rel)
         }
         if(bad.length){ await this.archiveConflict(p.t.txid,bad.map(rel=>({rel,state:fileState(this.#profilePath(rel))}))); report.push({txid:p.t.txid,result:'CONFLICTED'}); continue }
+        if(p.t.outcome && p.t.outcome.outcome!=='COMMITTED'){ report.push({txid:p.t.txid,result:'BAD_OUTCOME'}); continue }
         if(!p.t.outcome?.outcome) atomicFile(join(this.#txDir(p.t.txid),'OUTCOME.json'), JSON.stringify({v:1,txid:p.t.txid,outcome:'COMMITTED'}),{mode:0o600})
         tombstone('journal', this.#txDir(p.t.txid))
         report.push({txid:p.t.txid,result:'COMMITTED_OK'})
