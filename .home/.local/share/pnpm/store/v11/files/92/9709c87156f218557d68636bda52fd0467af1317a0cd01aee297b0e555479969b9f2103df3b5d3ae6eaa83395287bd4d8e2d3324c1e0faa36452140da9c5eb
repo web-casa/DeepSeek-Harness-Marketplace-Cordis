@@ -1,0 +1,2 @@
+export const name = 'spike-safe'
+export function apply(ctx) { console.log('spike-safe applied') }
