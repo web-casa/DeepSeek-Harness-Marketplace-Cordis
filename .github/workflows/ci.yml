@@ -66,5 +66,27 @@ jobs:
       - name: Run DSH install/activate/restart E2E
         run: node scripts/dsh-e2e-install.mjs
 
+  windows-best-effort:
+    name: Windows BEST_EFFORT journal and web build
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 11.10.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+      - name: Verify journal BEST_EFFORT behavior
+        # This is intentionally not the POSIX FULL crash matrix. It exercises
+        # Windows' real fsync downgrade, lock fencing, and rollback semantics.
+        run: node scripts/windows-best-effort.mjs
+      - name: Build Web plugin
+        run: node apps/web/scripts/build.mjs
+
 # The DSH tests use the checked-in local fixture by default. Production API probing is a
 # separate, explicit deployment gate because it needs a live contract-compliant endpoint.

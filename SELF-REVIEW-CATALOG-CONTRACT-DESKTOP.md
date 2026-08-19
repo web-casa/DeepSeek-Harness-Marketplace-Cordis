@@ -73,3 +73,8 @@ and emitted static chunk test are hard gates. The existing site smoke is also a
 hard Host/locale/canonical/security gate on explicit IPv4 loopback; server startup
 fails closed rather than falling through after the readiness timeout. It is fully
 local to CI and does not turn the fixture into a production-API claim.
+
+The separate `windows-best-effort` job runs a Windows-native journal smoke
+(directory-fsync downgrade, lock fencing, rollback) and Web build. It is not a
+POSIX crash/durability equivalence claim; its first remote green run is still
+required before Windows can be marked empirically covered.

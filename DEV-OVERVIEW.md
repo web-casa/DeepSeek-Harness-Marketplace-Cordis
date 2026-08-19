@@ -72,6 +72,9 @@
   `quarantined` kill switch、详情、JSON 404 与静态 chunk 都是硬门禁。启动未就绪立即失败；既有
   站点 UX smoke 也在显式 IPv4 loopback 上成为 Host/locale/canonical/security 的硬门禁。它同样
   不访问生产 API/R2。
+- `windows-best-effort` CI job 已配置为 Windows 原生目录 fsync 降级、锁 fencing、journal rollback
+  和 Web build smoke；首个 GitHub Actions green run 前仍不宣称 Windows 已实证，更不改变其
+  BEST_EFFORT 分级。
 - pnpm 仅显式批准 `esbuild` 的构建脚本（`allowBuilds.esbuild: true`）；这是 Web
   打包所需的已声明 devDependency，其余依赖仍不获隐式构建脚本授权。
 - 发布准备已完成：所有 workspace 的版本均为 `0.1.0`，`pnpm run pack:check` 会对每个
@@ -86,7 +89,7 @@
    DTO/门禁实现）。
 3. 公开 npm 发布授权：确定 package scope、license/provenance、workspace 依赖发布顺序和
    release tag/version。
-4. Windows BEST_EFFORT CI 实证。
+4. 触发并记录 `windows-best-effort` 的首个 GitHub Actions green run；Windows 保持 BEST_EFFORT。
 5. 8/24 后 codex 对 fc668e4..HEAD 补独立评审。
 
 ## 关键命令

@@ -27,9 +27,9 @@ Windows 平台为 BEST_EFFORT，需 Windows CI 实证后才可宣称 FULL。
 - [x] G6/G10 durable failpoint 点与矩阵场景全量对齐（FAILPOINT-COVERAGE.md）
 - [x] G7 统一 schema 校验模块
 - [x] G5 validator 内部持有（validateAndRecord）
-- [ ] Windows BEST_EFFORT 路径在 Windows CI 验证（仍开放）
+- [ ] Windows BEST_EFFORT 路径在 Windows CI 验证（仍开放；`windows-best-effort` job 已配置，
+  需首个远端 green run 后才可勾选，且绝不改变 Windows 的 BEST_EFFORT 分级）
 
 ## 外部评审后修复（P1）
 - [x] P1-1 ResolutionJournal.recoverReport schema 不匹配（txid/enum 修复）
 - [x] P1-2 sweepTrash 删除新鲜 trash 导致断链祖先 BAD_GRAPH 永久 wedge（sweepTrash 年龄门槛 + 缺失祖先断链语义）
-
