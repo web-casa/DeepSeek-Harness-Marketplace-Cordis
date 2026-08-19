@@ -63,3 +63,10 @@ handoff. It found and fixed four issues with regression coverage:
 The review found no remaining critical or high-severity issue in the implemented
 scope. Production deployment and target-network validation remain separate operator
 work.
+
+## CI follow-up
+
+The parent repository's existing PostgreSQL live-server smoke now seeds strict
+registry fixtures and verifies the real production build's cursor/ETag flow,
+platform filtering, blocked item, detail, host gate, and JSON 404. It is fully
+local to CI and does not turn the fixture into a production-API claim.

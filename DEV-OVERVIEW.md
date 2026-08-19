@@ -67,6 +67,9 @@
   smoke 与真实 DSH smoke/E2E；Node 24.18.0、pnpm 11.10.0、DSH 0.1.0-rc.7 和
   Actions 提交均固定。CI 的 DSH integration 只使用临时 profile 与本地 fixture，
   不把生产 API 当作可用依赖。
+- 父仓库的既有 PostgreSQL live-server smoke 现 seed 两个严格 registry fixture，并对生产构建
+  执行 v4 列表 cursor、ETag/304、web/desktop 筛选、`quarantined` kill switch、详情和 JSON
+  404 HTTP 验证；它同样不访问生产 API/R2。
 - pnpm 仅显式批准 `esbuild` 的构建脚本（`allowBuilds.esbuild: true`）；这是 Web
   打包所需的已声明 devDependency，其余依赖仍不获隐式构建脚本授权。
 - 发布准备已完成：所有 workspace 的版本均为 `0.1.0`，`pnpm run pack:check` 会对每个
