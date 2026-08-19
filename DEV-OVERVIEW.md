@@ -28,7 +28,8 @@
    activate，真实 E2E install/activate/restart 通过。
 7. codex review（mulerun）发现的阻断项已修复。
 8. 父仓库 cordis.run 后端补齐 v4 API：严格 registry 工件快照、列表/详情 ETag +
-   cursor + JSON error、以及校验后同域 preset ZIP 直出；生产部署仍待授权操作员执行。
+   cursor + JSON error、以及校验后同域 preset ZIP 直出；已完成生产 schema、部署和无重定向
+   preset 验证，目录数据仍受严格 registry 工件元数据门禁约束。
 
 ## 关键决策
 - 在线安装只支持 npm source；GitHub-only 只浏览/侧载。
@@ -49,15 +50,17 @@
 - `verifyInstalled` 已复核 `node_modules` manifest 的 name/version，及
   `pnpm-lock.yaml` 中该精确 artifact 的 `resolution.integrity`；任何缺失、
   不匹配、非普通文件或超限 lockfile 均 fail-closed 并触发既有回滚路径。
-- 父仓库 `/home/ivmm/daohang/toolso-ai-open` 已实现 cordis.run v4 后端：只有完整、精确
+- 父仓库 `/home/ivmm/daohang/toolso-ai-open` 已实现并部署 cordis.run v4 后端：只有完整、精确
   npm registry 工件快照才会进入安装目录；列表/详情支持 ETag/304、cursor、JSON 404，
   `quarantined` 条目以 `blocked:true` 保留 kill switch；preset 下载在 SHA-256/大小复核后
   同域 `200 application/zip` 直出，不再 302。后续安全 review 已补上 R2 流式上限、审批状态
   的计数事务复核、异常 JSON/503 回退和分类成员变更 revision；父仓库 357/357 单测、生产构建
-  和临时 PostgreSQL 的真实 Next 契约探针均已通过。
-- 生产 cordis.run API **尚未由本工作流部署**：基线时 list/detail 为 Next.js 404 HTML，
-  尚未执行生产 schema 变更、快照回填或生产域探针。因此 fixture E2E 和本机 API 探针都不是
-  生产 API E2E。
+  、Docker `next start` 健康探针和临时 PostgreSQL 的真实 Next 契约探针均已通过。
+- 生产验收（2026-08-19）：`https://cordis.run/api/presets/code/download` 直接返回
+  `200 application/zip`（无 `Location`）；`/api/v1/plugins` 返回 v1 契约 JSON（含
+  `schemaVersion`、`count`、`page`、`items`）。当前严格目录 `count=0`，不是客户端或 DTO
+  问题：生产同步到的候选 npm metadata 缺少 API 发布所需的明确 DSH engine/platform + 完整
+  registry artifact 证据，因而被 fail-closed 排除。真实生产 API DSH E2E 尚不能声明通过。
 - fixture 已对齐 cursor + `count/page`、`page/per_page` 兼容、ETag/304、JSON
   error、canonical screenshot；`scripts/cordis-run-contract-probe.mjs` 可在
   部署后做无 mutation 的目标验收，DSH E2E 也可显式通过 `CORDIS_RUN_API` 切换。
@@ -87,8 +90,9 @@
   发布、tag 和取消 private 均需 owner 明确授权，详见 `RELEASE.md`。
 
 ## 未完成事项
-1. 由已授权操作员按父仓库 `docs/CORDIS-API-V4.md` 执行生产 schema、快照回填、部署、目标
-   契约探针和专用 E2E 插件验证。
+1. 取得一个可公开安装的、权威声明 DSH engine、`dsh.platforms`、精确版本、sha512 integrity 与
+   npm registry tarball 的插件条目（或由 owner 审核的等价权威清单）；再执行无 mutation 目标
+   契约探针和真实生产 API DSH E2E。不得从包名、README 或 `bundle.patch` 推断这些字段。
 2. Desktop 分支提交/推送后，与已部署测试目标做一次端到端兼容性 smoke（不重复开发其已报告的
    DTO/门禁实现）。
 3. 公开 npm 发布授权：确定 package scope、license/provenance、workspace 依赖发布顺序和
