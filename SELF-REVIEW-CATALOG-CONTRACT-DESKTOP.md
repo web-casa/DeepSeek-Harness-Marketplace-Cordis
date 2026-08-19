@@ -66,7 +66,10 @@ work.
 
 ## CI follow-up
 
-The parent repository's existing PostgreSQL live-server smoke now seeds strict
-registry fixtures and verifies the real production build's cursor/ETag flow,
-platform filtering, blocked item, detail, host gate, and JSON 404. It is fully
+The parent repository's PostgreSQL live-server smoke now seeds strict registry
+fixtures and starts the same `next start` production build as Docker. Its v4
+cursor/ETag flow, platform filtering, blocked item, detail, host gate, JSON 404,
+and emitted static chunk test are hard gates. The existing site smoke is also a
+hard Host/locale/canonical/security gate on explicit IPv4 loopback; server startup
+fails closed rather than falling through after the readiness timeout. It is fully
 local to CI and does not turn the fixture into a production-API claim.
