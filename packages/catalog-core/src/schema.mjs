@@ -32,9 +32,10 @@ export function normalizePage(body, perPage) {
   if (Number.isInteger(page)) return { cursor: String(page), hasMore: false, limit: perPage ?? body?.per_page ?? 50 }
   if (isObject(page)) {
     const limit = Number.isInteger(page.limit) ? page.limit : Number.isInteger(page.per_page) ? page.per_page : perPage ?? 50
-    return { cursor: page.cursor ?? String(page.page ?? ''), hasMore: page.hasMore === true, limit }
+    const cursor = typeof page.cursor === 'string' ? page.cursor : (Number.isInteger(page.page) ? String(page.page) : null)
+    return { cursor, hasMore: page.hasMore === true, limit }
   }
-  return { cursor: '', hasMore: false, limit: perPage ?? 50 }
+  return { cursor: null, hasMore: false, limit: perPage ?? 50 }
 }
 
 export function validateCatalog(body) {

@@ -14,6 +14,12 @@ export function parseListQuery(url) {
   const platform = url.searchParams.get('platform') || 'web'
   const sort = url.searchParams.get('sort') || undefined
   const order = url.searchParams.get('order') || undefined
+  const cursor = url.searchParams.get('cursor') || undefined
+  const rawLimit = url.searchParams.get('limit')
+  if (cursor || rawLimit !== null) {
+    const limit = Math.min(100, Math.max(1, parseInt(rawLimit || '50', 10) || 50))
+    return { q: q || undefined, category, platform, sort, order, cursor, limit }
+  }
   const page = parseInt(url.searchParams.get('page') || '1', 10) || 1
   const perPage = parseInt(url.searchParams.get('per_page') || '50', 10) || 50
   return { q: q || undefined, category, platform, sort, order, page, perPage }

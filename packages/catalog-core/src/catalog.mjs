@@ -9,6 +9,13 @@ export class CatalogError extends Error {
 
 const DEFAULT_BASE = 'https://cordis.run/api/v1'
 
+function isContractScreenshot(value) {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && url.hostname === 'cdn.cordis.run'
+  } catch { return false }
+}
+
 export class CatalogClient {
   constructor({ baseUrl = DEFAULT_BASE, fetchImpl = fetch, snapshot = null, cacheTtlMs = 60_000, staleIfErrorMs = 24 * 60 * 60 * 1000 } = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, '')
@@ -97,7 +104,7 @@ export class CatalogClient {
       source: normalized.source,
       catalogRevision: res.data.catalogRevision ?? null,
       versions: Array.isArray(res.data.versions) ? res.data.versions : [],
-      screenshots: Array.isArray(res.data.screenshots) ? res.data.screenshots.filter(x => typeof x === 'string') : [],
+      screenshots: Array.isArray(res.data.screenshots) ? res.data.screenshots.filter(isContractScreenshot) : [],
     }
   }
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { CatalogClient, CatalogError, installability } from '../src/index.js'
 
@@ -70,7 +70,14 @@ test('legacy flat item and page number are normalized', async () => {
   assert.equal(res.items[0].source.packageName, 'legacy')
 })
 
-test('fixture server integration: list/detail/error', async () => {
+test('detail rejects screenshots outside the contract CDN', async () => {
+  const item = { ...catalog.items[0], screenshots: ['https://cdn.cordis.run/screenshots/a/1.webp', 'http://127.0.0.1/unsafe.png', 'https://example.test/unsafe.png'] }
+  const c = clientWith(async () => fakeResponse(200, item))
+  const detail = await c.detail('a')
+  assert.deepEqual(detail.screenshots, ['https://cdn.cordis.run/screenshots/a/1.webp'])
+})
+
+test('fixture server integration: cursor/page compatibility, ETag, detail, and error', async () => {
   const fixture = fileURLToPath(new URL('../../../spikes/S1/fixture-server.mjs', import.meta.url))
   const child = spawn(process.execPath, [fixture], { stdio: ['ignore', 'pipe', 'pipe'] })
   let out = '', err = ''
@@ -81,14 +88,36 @@ test('fixture server integration: list/detail/error', async () => {
   const port = out.trim().split('\n')[0]
   try {
     const c = new CatalogClient({ baseUrl: `http://127.0.0.1:${port}/api/v1` })
-    const list = await c.list({ platform: 'desktop', page: 1, perPage: 1 })
+    const list = await c.list({ platform: 'desktop', limit: 1 })
     assert.equal(list.source, 'network')
     assert.equal(list.count, 2)
     assert.equal(list.items.length, 1)
     assert.equal(list.page.hasMore, true)
+    assert.equal(list.page.cursor, 'fixture:1')
+    const cursorPage = await c.list({ platform: 'desktop', cursor: list.page.cursor, limit: 1 })
+    assert.equal(cursorPage.items[0].slug, 'desktop-only')
+    assert.equal(cursorPage.page.hasMore, false)
+    assert.equal(cursorPage.page.cursor, null)
+    const legacyPage = await c.list({ platform: 'desktop', page: 2, perPage: 1 })
+    assert.equal(legacyPage.items[0].slug, 'desktop-only')
+    const category = await c.list({ category: 'agent' })
+    assert.deepEqual(category.items.map(item => item.slug), ['desktop-only'])
+    const listUrl = `http://127.0.0.1:${port}/api/v1/plugins?platform=web&limit=1`
+    const first = await fetch(listUrl)
+    const etag = first.headers.get('etag')
+    assert.equal(first.status, 200)
+    assert.ok(etag)
+    const notModified = await fetch(listUrl, { headers: { 'if-none-match': etag } })
+    assert.equal(notModified.status, 304)
+    const probe = fileURLToPath(new URL('../../../scripts/cordis-run-contract-probe.mjs', import.meta.url))
+    const probeResult = spawnSync(process.execPath, [probe], {
+      env: { ...process.env, CORDIS_RUN_API: `http://127.0.0.1:${port}/api/v1` }, encoding: 'utf8', timeout: 10_000,
+    })
+    assert.equal(probeResult.status, 0, probeResult.stderr || probeResult.stdout)
     const detail = await c.detail('dsh-market')
     assert.equal(detail.source.type, 'npm')
     assert.equal(detail.screenshots.length, 1)
+    assert.match(detail.screenshots[0], /^https:\/\/cdn\.cordis\.run\//)
     await assert.rejects(() => c.detail('not-exist'), e => e.code === 'NOT_FOUND')
   } finally {
     child.kill()

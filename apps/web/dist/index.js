@@ -32,9 +32,10 @@ function normalizePage(body, perPage) {
   if (Number.isInteger(page)) return { cursor: String(page), hasMore: false, limit: perPage ?? body?.per_page ?? 50 };
   if (isObject(page)) {
     const limit = Number.isInteger(page.limit) ? page.limit : Number.isInteger(page.per_page) ? page.per_page : perPage ?? 50;
-    return { cursor: page.cursor ?? String(page.page ?? ""), hasMore: page.hasMore === true, limit };
+    const cursor = typeof page.cursor === "string" ? page.cursor : Number.isInteger(page.page) ? String(page.page) : null;
+    return { cursor, hasMore: page.hasMore === true, limit };
   }
-  return { cursor: "", hasMore: false, limit: perPage ?? 50 };
+  return { cursor: null, hasMore: false, limit: perPage ?? 50 };
 }
 function validateCatalog(body) {
   if (!isObject(body) || body.schemaVersion !== 1) throw new CatalogSchemaError("schemaVersion must be 1");
@@ -101,6 +102,14 @@ var CatalogError = class extends Error {
   }
 };
 var DEFAULT_BASE = "https://cordis.run/api/v1";
+function isContractScreenshot(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "cdn.cordis.run";
+  } catch {
+    return false;
+  }
+}
 var CatalogClient = class {
   constructor({ baseUrl = DEFAULT_BASE, fetchImpl = fetch, snapshot = null, cacheTtlMs = 6e4, staleIfErrorMs = 24 * 60 * 60 * 1e3 } = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
@@ -190,7 +199,7 @@ var CatalogClient = class {
       source: normalized.source,
       catalogRevision: res.data.catalogRevision ?? null,
       versions: Array.isArray(res.data.versions) ? res.data.versions : [],
-      screenshots: Array.isArray(res.data.screenshots) ? res.data.screenshots.filter((x) => typeof x === "string") : []
+      screenshots: Array.isArray(res.data.screenshots) ? res.data.screenshots.filter(isContractScreenshot) : []
     };
   }
   async fetchFresh(slug) {
@@ -213,6 +222,12 @@ function parseListQuery(url) {
   const platform = url.searchParams.get("platform") || "web";
   const sort = url.searchParams.get("sort") || void 0;
   const order = url.searchParams.get("order") || void 0;
+  const cursor = url.searchParams.get("cursor") || void 0;
+  const rawLimit = url.searchParams.get("limit");
+  if (cursor || rawLimit !== null) {
+    const limit = Math.min(100, Math.max(1, parseInt(rawLimit || "50", 10) || 50));
+    return { q: q2 || void 0, category, platform, sort, order, cursor, limit };
+  }
   const page = parseInt(url.searchParams.get("page") || "1", 10) || 1;
   const perPage = parseInt(url.searchParams.get("per_page") || "50", 10) || 50;
   return { q: q2 || void 0, category, platform, sort, order, page, perPage };

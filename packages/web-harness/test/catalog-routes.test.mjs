@@ -61,3 +61,12 @@ test('parseListQuery defaults web platform', () => {
   assert.equal(q.platform, 'web')
   assert.equal(q.q, 'hello')
 })
+
+test('parseListQuery preserves cursor pagination without legacy page parameters', () => {
+  const q = parseListQuery(new URL('http://x/cordis-mp/catalog?platform=desktop&cursor=fixture%3A20&limit=20'))
+  assert.equal(q.platform, 'desktop')
+  assert.equal(q.cursor, 'fixture:20')
+  assert.equal(q.limit, 20)
+  assert.equal(q.page, undefined)
+  assert.equal(q.perPage, undefined)
+})

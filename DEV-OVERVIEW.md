@@ -37,7 +37,7 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
-- 148 tests / 148 pass。
+- 150 tests / 150 pass。
 - 真实 DSH E2E PASS：install → patch disable → activate → restart → dsh-market
   路由 200。
 - `verifyInstalled` 已复核 `node_modules` manifest 的 name/version，及
@@ -45,11 +45,15 @@
   不匹配、非普通文件或超限 lockfile 均 fail-closed 并触发既有回滚路径。
 - 生产 cordis.run API 尚未上线（2026-08-19 直接探测 list/detail 均为 Next.js
   404 HTML；本地 fixture 可用），因此不得把 fixture E2E 说成生产 API E2E。
-- 桌面端 DTO 尚未迁移到嵌套 source。
+- fixture 已对齐 cursor + `count/page`、`page/per_page` 兼容、ETag/304、JSON
+  error、canonical screenshot；`scripts/cordis-run-contract-probe.mjs` 可在
+  部署后做无 mutation 的目标验收，DSH E2E 也可显式通过 `CORDIS_RUN_API` 切换。
+- 桌面端源码不在本仓库，故尚未实际迁移；迁移 DTO/错误/分页/安全门禁指南见
+  `docs/desktop-dto-migration.md`。
 
 ## 未完成事项
 1. cordis.run 生产 API 按 docs/cordis-run-api-contract.md 上线。
-2. 桌面端 DTO 迁移（source / description / page）。
+2. 桌面端按 `docs/desktop-dto-migration.md` 实际迁移 DTO（source / description / page）。
 3. Web UI：详情弹窗、截图、分页、错误详情。
 4. CI：pnpm test + dsh smoke + e2e。
 5. 发布：npm pack、tag、release 文档。
@@ -57,9 +61,10 @@
 7. 8/24 后 codex 对 fc668e4..HEAD 补独立评审。
 
 ## 关键命令
-- 全部测试：`pnpm -r test`（当前 148 tests）
+- 全部测试：`pnpm -r test`（当前 150 tests）
 - 冒烟：`node scripts/dsh-smoke.mjs`
 - 真实 E2E：`node scripts/dsh-e2e-install.mjs`
+- 目标 API 无 mutation 验收：`CORDIS_RUN_API=https://<target>/api/v1 node scripts/cordis-run-contract-probe.mjs`
 - 构建：`node apps/web/scripts/build.mjs`
 - 打包 smoke tarball：`node apps/web/scripts/pack-smoke.mjs`
 

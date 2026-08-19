@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "test": "pnpm -r test",
-    "smoke": "node scripts/host-smoke.mjs"
+    "smoke": "node scripts/host-smoke.mjs",
+    "api:probe": "node scripts/cordis-run-contract-probe.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"

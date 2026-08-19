@@ -8,6 +8,12 @@ import { fileURLToPath } from 'node:url'
 const buildScript = fileURLToPath(new URL('../apps/web/scripts/build.mjs', import.meta.url))
 const packScript = fileURLToPath(new URL('../apps/web/scripts/pack-smoke.mjs', import.meta.url))
 const fixture = fileURLToPath(new URL('../spikes/S1/fixture-server.mjs', import.meta.url))
+const requestedApi = process.env.CORDIS_RUN_API?.replace(/\/+$/, '') || null
+const pluginSlug = process.env.CORDIS_E2E_SLUG || 'dsh-market'
+const pluginRoute = process.env.CORDIS_E2E_PLUGIN_ROUTE || '/dsh-market/registry'
+
+function escapeRegExp(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
+function disabledInPatch(text, id) { return new RegExp(`- id: ${escapeRegExp(id)}\\s*\\n {2}disabled: true`).test(text) }
 
 const build = spawnSync(process.execPath, [buildScript], { stdio: 'inherit' })
 if (build.status !== 0) { console.error('build failed'); process.exit(1) }
@@ -21,12 +27,19 @@ const env = { ...process.env, HOME: home, DSH_HOME: dshHome, CI: 'true', npm_con
 const add = spawnSync('dsh', ['plugin', '--profile', 'web', 'add', `file:${tgz}`, '--ignore-scripts'], { env, encoding: 'utf8', timeout: 180_000 })
 if (add.status !== 0) { console.error('add failed\n', add.stdout, add.stderr); process.exit(1) }
 
-const fixtureChild = spawn(process.execPath, [fixture], { stdio: ['ignore', 'pipe', 'pipe'] })
-let fixtureOut = ''; fixtureChild.stdout.on('data', d => fixtureOut += d)
-for (let i = 0; i < 40 && !fixtureOut.includes('\n'); i++) await new Promise(r => setTimeout(r, 50))
-const fixturePort = fixtureOut.trim().split('\n')[0]
+let fixtureChild = null
+let apiBase = requestedApi
+if (!apiBase) {
+  fixtureChild = spawn(process.execPath, [fixture], { stdio: ['ignore', 'pipe', 'pipe'] })
+  let fixtureOut = ''; fixtureChild.stdout.on('data', d => fixtureOut += d)
+  for (let i = 0; i < 40 && !fixtureOut.includes('\n'); i++) await new Promise(r => setTimeout(r, 50))
+  const fixturePort = fixtureOut.trim().split('\n')[0]
+  if (!/^\d+$/.test(fixturePort)) { console.error('fixture did not start'); fixtureChild.kill(); process.exit(1) }
+  apiBase = `http://127.0.0.1:${fixturePort}/api/v1`
+}
+console.log(`catalog api ${apiBase} (${requestedApi ? 'external' : 'fixture'})`)
 
-const webEnv = { ...env, CORDIS_RUN_API: `http://127.0.0.1:${fixturePort}/api/v1` }
+const webEnv = { ...env, CORDIS_RUN_API: apiBase }
 const web = spawn('dsh', ['web', '--port', '0'], { env: webEnv, stdio: ['ignore', 'pipe', 'pipe'] })
 let out = '', err = ''; web.stdout.on('data', d => out += d); web.stderr.on('data', d => err += d)
 let port = null
@@ -39,32 +52,34 @@ const session = await req('/cordis-mp/session', { method: 'POST', headers: { ori
 if (session.status !== 200) throw new Error('session failed ' + JSON.stringify(session))
 const token = session.body.token
 const auth = { origin, 'content-type': 'application/json', 'x-cordis-mp-token': token }
-const detail = await req('/cordis-mp/plugin/dsh-market')
+const detail = await req('/cordis-mp/plugin/' + encodeURIComponent(pluginSlug))
 const entryRevision = detail.body.plugin.entryRevision
 console.log('install start', entryRevision)
-const install = await req('/cordis-mp/install', { method: 'POST', headers: auth, body: JSON.stringify({ slug: 'dsh-market', entryRevision }) })
+const install = await req('/cordis-mp/install', { method: 'POST', headers: auth, body: JSON.stringify({ slug: pluginSlug, entryRevision }) })
 console.log('install response', install.status, install.body)
 if (install.status !== 200 || !install.body.pendingActivation) { console.error(out, err); process.exit(1) }
+const entryIds = install.body.pending?.entryIds
+if (!Array.isArray(entryIds) || entryIds.length === 0) { console.error('install response has no inspected entryIds'); process.exit(1) }
 
 const patchPath = join(dshHome, 'profiles', 'web', 'cordis.patch.yml')
 const patchAfterInstall = readFileSync(patchPath, 'utf8')
 console.log('patch after install:\n' + patchAfterInstall)
-if (!/- id: dsh-market\s*\n {2}disabled: true/.test(patchAfterInstall)) { console.error('pre-disable row missing'); process.exit(1) }
+if (!entryIds.every(id => disabledInPatch(patchAfterInstall, id))) { console.error('pre-disable row missing'); process.exit(1) }
 
 const dump1 = spawnSync('dsh', ['--profile', 'web', '--dump-config'], { env, encoding: 'utf8', timeout: 60_000 })
-if (dump1.status !== 0 || !/dsh-market[\s\S]{0,80}disabled: true/.test(dump1.stdout)) { console.error('dump-config did not show disabled dsh-market status=' + dump1.status + '\n' + dump1.stdout.slice(0, 2000)); process.exit(1) }
+if (dump1.status !== 0 || !entryIds.every(id => new RegExp(`${escapeRegExp(id)}[\\s\\S]{0,80}disabled: true`).test(dump1.stdout))) { console.error('dump-config did not show disabled entry status=' + dump1.status + '\n' + dump1.stdout.slice(0, 2000)); process.exit(1) }
 
-const activate = await req('/cordis-mp/activate', { method: 'POST', headers: auth, body: JSON.stringify({ slug: 'dsh-market' }) })
+const activate = await req('/cordis-mp/activate', { method: 'POST', headers: auth, body: JSON.stringify({ slug: pluginSlug }) })
 console.log('activate response', activate.status, activate.body)
 if (activate.status !== 200 || activate.body.status !== 'ACTIVE') process.exit(1)
 
 const patchAfterActivate = readFileSync(patchPath, 'utf8')
 console.log('patch after activate:\n' + patchAfterActivate)
-if (/- id: dsh-market\s*\n {2}disabled: true/.test(patchAfterActivate)) { console.error('disable row still present after activate'); process.exit(1) }
+if (entryIds.some(id => disabledInPatch(patchAfterActivate, id))) { console.error('disable row still present after activate'); process.exit(1) }
 
 const dump2 = spawnSync('dsh', ['--profile', 'web', '--dump-config'], { env, encoding: 'utf8', timeout: 60_000 })
-if (dump2.status !== 0 || /dsh-market[\s\S]{0,80}disabled: true/.test(dump2.stdout)) { console.error('dump-config still disabled after activate status=' + dump2.status); process.exit(1) }
-// 重启 DSH，验证 activate 后的 dsh-market 真实加载（其宿主路由 /dsh-market/registry 可达）
+if (dump2.status !== 0 || entryIds.some(id => new RegExp(`${escapeRegExp(id)}[\\s\\S]{0,80}disabled: true`).test(dump2.stdout))) { console.error('dump-config still disabled after activate status=' + dump2.status); process.exit(1) }
+// 重启 DSH，验证 activate 后目标插件的已知宿主路由真实可达。
 web.kill()
 await new Promise(r => setTimeout(r, 500))
 const web2 = spawn('dsh', ['web', '--port', '0'], { env: webEnv, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -72,9 +87,9 @@ let out2 = '', err2 = ''; web2.stdout.on('data', d => out2 += d); web2.stderr.on
 let port2 = null
 for (let i = 0; i < 120 && !port2; i++) { const m = /dsh web: http:\/\/127\.0\.0\.1:(\d+)/.exec(out2); if (m) port2 = m[1]; else await new Promise(r => setTimeout(r, 250)) }
 if (!port2) { console.error('restart failed\n' + out2 + '\n' + err2); process.exit(1) }
-const market = await fetch(`http://127.0.0.1:${port2}/dsh-market/registry`)
-console.log('dsh-market after restart', market.status)
+const market = await fetch(`http://127.0.0.1:${port2}${pluginRoute}`)
+console.log(`${pluginSlug} after restart`, market.status)
 if (market.status !== 200) process.exit(1)
 console.log('E2E INSTALL+ACTIVATE+RESTART PASS')
-web2.kill(); fixtureChild.kill()
+web2.kill(); fixtureChild?.kill()
 process.exit(0)

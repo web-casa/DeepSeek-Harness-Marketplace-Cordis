@@ -2,6 +2,10 @@
   "schemaVersion": 1,
   "catalogRevision": "2026-08-18T00:00:00Z-8f3a",
   "updated": "2026-08-18T00:00:00Z",
+  "categories": {
+    "market": { "zh": "市场", "en": "Market" },
+    "agent": { "zh": "智能体", "en": "Agent" }
+  },
   "page": {
     "cursor": "1",
     "hasMore": false,
