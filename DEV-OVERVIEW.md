@@ -97,14 +97,27 @@
   验证该 snapshot fallback；真实 DSH E2E 仍通过。`pnpm run pack:check` 现同时对各 workspace
   和该临时候选执行无脚本 `npm pack --dry-run`。源码包依旧 `private: true`；没有 npm 发布、tag
   或可见性变更，也不会把本地 pack integrity 当作 registry integrity。
+- 父仓库的单包 npm 同步现有独立只读预检：
+  `pnpm plugins:sync -- --pkg=<package> --dry-run --no-assets` 只读取 npm
+  packument，并要求包名、latest `dsh.bundle`、精确 version/SHA-512/tarball/
+  platform/engine 全部满足 strict v4；不会进入数据库/R2 写入路径。实际单包同步必须提供
+  owner 确认且已配置的 `--category`，并正确传递 `--no-assets`；未知分类在同步器初始化前
+  fail-closed。同步与提交验证新增 latest bundle 防陈旧 root 字段测试；父仓库为
+  363/363 单测与生产构建通过。
+- 生产只读复核（2026-08-19）：`/api/v1/plugins?platform=desktop&limit=1` 仍为
+  `200 application/json`、含 ETag、`count=0`；npm registry 中 `@cordis-mp/web`
+  仍为 404。因而没有实际生产条目，也没有把结构 probe 误报为生产安装 E2E。
 
 ## 未完成事项
-1. Owner 决定 `@cordis-mp/web` 的 npm scope/access、适用 license、maintainers、provenance 和
-   release version，并以其 npm 身份发布经审阅的候选。父仓库的 Apache-2.0 文件不能在未确认
-   授权范围时自动套用到这个嵌套独立工作树。
-2. 发布后，通过父仓库 `pnpm plugins:sync -- --pkg=@cordis-mp/web --no-assets` 取得 npm 的精确
-   version/sha512/tarball，再确认生产 `count>0`、运行目标 API probe 和真实生产 API DSH E2E。
-   不得从包名、README 或 `bundle.patch` 反推这些字段。
+1. Owner 决定 `@cordis-mp/web` 的 npm scope/access、适用 license、maintainers、provenance、
+   release version 及已配置的 Cordis curation category，并以其 npm 身份发布经审阅的候选。
+   父仓库的 Apache-2.0 文件不能在未确认授权范围时自动套用到这个嵌套独立工作树。
+2. 发布后，先运行父仓库的只读预检
+   `pnpm plugins:sync -- --pkg=@cordis-mp/web --dry-run --no-assets`；仅在它报告 strict
+   artifact ready 后，使用 owner 确认的分类运行
+   `pnpm plugins:sync -- --pkg=@cordis-mp/web --category=<owner-approved-cordis-category> --no-assets`。
+   然后确认生产 `count>0`、运行目标 API probe 和真实生产 API DSH E2E。不得从包名、README
+   或 `bundle.patch` 反推 version/sha512/tarball。
 3. 以已审核公开 slug 运行 Desktop 的 `CORDIS_MARKET_PROBE_SLUG=<slug> pnpm verify:cordis-market`；
    再执行用户确认的 Desktop 安装→pending→显式 Activate→重启 E2E。若需 Microsoft Store
    发布，还要走独立审查后更新 `store-curated-plugins.json`，不得提前放宽 allowlist。
@@ -120,6 +133,8 @@
 - 构建：`node apps/web/scripts/build.mjs`
 - 打包 smoke tarball：`node apps/web/scripts/pack-smoke.mjs`
 - npm pack 预检：`pnpm run pack:check`
+- 发布后单包只读 registry 预检（在父仓库）：
+  `pnpm plugins:sync -- --pkg=@cordis-mp/web --dry-run --no-assets`
 - Desktop 生产只读 smoke（在 Desktop 仓库）：`pnpm verify:cordis-preset && pnpm verify:cordis-market`
 - CI 工作流静态校验：`actionlint .github/workflows/ci.yml`
 

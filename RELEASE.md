@@ -46,6 +46,34 @@ implementation directories are absent. The candidate tarball exists only under t
 directory; no registry artifact is written or published, and its local pack integrity is never
 used as an installation integrity.
 
+## After an owner-approved npm publication
+
+The generated candidate is not evidence of a registry artifact.  Once the owner has published
+the approved package, use the parent repository's read-only registry preflight before any
+database synchronization:
+
+```bash
+pnpm plugins:sync -- --pkg=@cordis-mp/web --dry-run --no-assets
+```
+
+It fetches the npm packument only and exits nonzero unless the requested name, exact latest
+`dsh.bundle`, version, SHA-512 integrity, registry tarball, platform declaration, and DSH engine
+all satisfy the strict v4 catalog boundary.  It does not run the database/R2 synchronization
+path.  A rejection means stop and repair the published metadata; do not hand-write a catalog
+source record.
+
+The owner must then choose an already configured Cordis category.  Only the explicit mutable
+command accepts that category, and it honors `--no-assets`:
+
+```bash
+pnpm plugins:sync -- --pkg=@cordis-mp/web \
+  --category=<owner-approved-cordis-category> --no-assets
+```
+
+Omitting or misspelling the category fails before synchronization.  This command still needs
+the production operator's database authority; it neither publishes npm packages nor changes
+their visibility.
+
 ## Before a public npm release
 
 Do not remove `private: true`, run `npm publish`, or create a release tag until the owner has
@@ -56,7 +84,8 @@ approved all of the following:
 2. Per-package README, license, ownership/access, npm provenance, and registry policy.
 3. A release version if it is not `0.1.0`; update all aligned manifests intentionally and rerun
    the full preflight.
-4. A public artifact successfully synchronized by the deployed cordis.run v4 API. The service
+4. A public artifact passes the registry-only preflight and is successfully synchronized by the
+   deployed cordis.run v4 API with an owner-approved Cordis category. The service
    itself is live and direct preset download is verified, but the strict production catalog is
    currently empty until npm provides the exact version, SHA-512 integrity and tarball for an
    approved package. Fixture/local E2E is not evidence of a production API lifecycle release.
