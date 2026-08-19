@@ -46,3 +46,20 @@ public E2E test plugin, and target-network validation remain operator work; see
 `docs/cordis-run-api-rollout.md`. Desktop v4 migration is now reported complete
 on `feat/cordis-v4-desktop`, but remains outside this checkout and has not been
 independently retested here.
+
+## Follow-up review fixes
+
+The parent v4 implementation received a second security/correctness review before
+handoff. It found and fixed four issues with regression coverage:
+
+- preset downloads now recheck both `approved` rows inside the counter transaction,
+  preventing a rejection that races R2 retrieval from being served or counted;
+- R2 reads enforce the archive ceiling while consuming Node streams, rather than only
+  after `transformToByteArray()` has buffered a body;
+- list/detail route setup failures stay inside the documented JSON error contract;
+- secondary category membership and outbound URL canonicalization now participate in
+  strict catalog freshness/safety behavior.
+
+The review found no remaining critical or high-severity issue in the implemented
+scope. Production deployment and target-network validation remain separate operator
+work.

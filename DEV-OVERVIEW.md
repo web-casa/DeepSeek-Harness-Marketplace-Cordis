@@ -48,8 +48,9 @@
 - 父仓库 `/home/ivmm/daohang/toolso-ai-open` 已实现 cordis.run v4 后端：只有完整、精确
   npm registry 工件快照才会进入安装目录；列表/详情支持 ETag/304、cursor、JSON 404，
   `quarantined` 条目以 `blocked:true` 保留 kill switch；preset 下载在 SHA-256/大小复核后
-  同域 `200 application/zip` 直出，不再 302。父仓库 349/349 单测、生产构建和临时
-  PostgreSQL 的真实 Next 契约探针均已通过。
+  同域 `200 application/zip` 直出，不再 302。后续安全 review 已补上 R2 流式上限、审批状态
+  的计数事务复核、异常 JSON/503 回退和分类成员变更 revision；父仓库 357/357 单测、生产构建
+  和临时 PostgreSQL 的真实 Next 契约探针均已通过。
 - 生产 cordis.run API **尚未由本工作流部署**：基线时 list/detail 为 Next.js 404 HTML，
   尚未执行生产 schema 变更、快照回填或生产域探针。因此 fixture E2E 和本机 API 探针都不是
   生产 API E2E。
