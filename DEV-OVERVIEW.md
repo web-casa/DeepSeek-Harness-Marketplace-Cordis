@@ -14,7 +14,7 @@
   - web-harness：本地 HTTP 路由 + mutation guard
   - dsh-runner：真实 dsh CLI 适配 + patch 激活端口
   - inspect-core：tarball/entryIds/integrity 检查
-- apps/web：DSH 插件壳 + 客户端市场 UI 基础
+- apps/web：DSH 插件壳 + 客户端市场 UI（搜索、详情、分页、安装/显式启用）
 
 ## 时间线
 1. 调研 dsh-market / dsh-plugin-hub / DSH 机制。
@@ -37,7 +37,7 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
-- 150 tests / 150 pass。
+- 151 tests / 151 pass。
 - 真实 DSH E2E PASS：install → patch disable → activate → restart → dsh-market
   路由 200。
 - `verifyInstalled` 已复核 `node_modules` manifest 的 name/version，及
@@ -50,18 +50,20 @@
   部署后做无 mutation 的目标验收，DSH E2E 也可显式通过 `CORDIS_RUN_API` 切换。
 - 桌面端源码不在本仓库，故尚未实际迁移；迁移 DTO/错误/分页/安全门禁指南见
   `docs/desktop-dto-migration.md`。
+- Web 市场已提供详情弹窗、仅渲染 `https://cdn.cordis.run` 截图、cursor 历史分页、
+  Web/Desktop 平台徽章及可展开的错误诊断（code/HTTP/request ID/retry）。安装和启用
+  仍只经既有 guard-backed controller/API；页面不新增 mutation 通道。
 
 ## 未完成事项
 1. cordis.run 生产 API 按 docs/cordis-run-api-contract.md 上线。
 2. 桌面端按 `docs/desktop-dto-migration.md` 实际迁移 DTO（source / description / page）。
-3. Web UI：详情弹窗、截图、分页、错误详情。
-4. CI：pnpm test + dsh smoke + e2e。
-5. 发布：npm pack、tag、release 文档。
-6. Windows BEST_EFFORT CI 实证。
-7. 8/24 后 codex 对 fc668e4..HEAD 补独立评审。
+3. CI：pnpm test + build + dsh smoke + e2e。
+4. 发布：npm pack、tag、release 文档。
+5. Windows BEST_EFFORT CI 实证。
+6. 8/24 后 codex 对 fc668e4..HEAD 补独立评审。
 
 ## 关键命令
-- 全部测试：`pnpm -r test`（当前 150 tests）
+- 全部测试：`pnpm -r test`（当前 151 tests）
 - 冒烟：`node scripts/dsh-smoke.mjs`
 - 真实 E2E：`node scripts/dsh-e2e-install.mjs`
 - 目标 API 无 mutation 验收：`CORDIS_RUN_API=https://<target>/api/v1 node scripts/cordis-run-contract-probe.mjs`

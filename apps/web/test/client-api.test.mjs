@@ -40,6 +40,11 @@ test('catalog serializes query params', async () => {
   assert.match(lastUrl, /page=2/)
 })
 
+test('catalog errors retain server diagnostic fields', async () => {
+  const api = createMarketApi({ fetchImpl: async () => mk(429, { error: { code: 'RATE_LIMITED', message: 'later', requestId: 'req-1', retryAfter: 30 } }) })
+  await assert.rejects(() => api.detail('p'), error => error.code === 'RATE_LIMITED' && error.status === 429 && error.requestId === 'req-1' && error.retryAfter === 30)
+})
+
 function mk(status, body) {
   return { status, ok: status >= 200 && status < 300, text: async () => JSON.stringify(body), json: async () => body }
 }

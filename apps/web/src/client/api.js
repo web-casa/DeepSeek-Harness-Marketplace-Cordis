@@ -4,8 +4,13 @@ export function createMarketApi({ fetchImpl = globalThis.fetch, base = '' } = {}
   let token = null
   async function session() {
     const res = await fetchImpl(`${base}/cordis-mp/session`, { method: 'POST' })
-    if (!res.ok) throw new Error(`session failed: HTTP ${res.status}`)
-    const body = await res.json()
+    const body = await json(res)
+    if (typeof body.token !== 'string' || !body.token) {
+      const error = new Error('session failed: response has no mutation token')
+      error.code = 'BAD_SESSION'
+      error.status = res.status
+      throw error
+    }
     token = body.token
     return body.token
   }
@@ -15,6 +20,7 @@ export function createMarketApi({ fetchImpl = globalThis.fetch, base = '' } = {}
     if (!res.ok) {
       const e = new Error(body?.error?.message || `HTTP ${res.status}`)
       e.code = body?.error?.code || 'HTTP_ERROR'; e.status = res.status
+      e.requestId = body?.error?.requestId || null; e.retryAfter = body?.error?.retryAfter ?? null
       throw e
     }
     return body
