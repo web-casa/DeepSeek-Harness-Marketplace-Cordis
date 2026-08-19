@@ -1,5 +1,5 @@
 {
-  "name": "@cordis-mp/web",
+  "name": "@webcasa/web",
   "version": "0.1.0",
   "description": "Cordis marketplace plugin for DeepSeek Harness",
   "license": "MIT",

@@ -90,14 +90,14 @@
   BEST_EFFORT 分级。
 - pnpm 仅显式批准 `esbuild` 的构建脚本（`allowBuilds.esbuild: true`）；这是 Web
   打包所需的已声明 devDependency，其余依赖仍不获隐式构建脚本授权。
-- 独立候选打包已实现并完成本地验证：`@cordis-mp/web` 的私有源码 manifest 明确声明
+- 独立候选打包已实现并完成本地验证：`@webcasa/web` 的私有源码 manifest 明确声明
   `dsh.platforms: [web, desktop]` 与 `dsh.engines.dsh: >=0.1.0-rc.7 <0.2.0`；
   `pack-smoke` 生成无 workspace 依赖、可公开打包的独立候选，且保留 `dist/`，从而修复 host
   的 `../data/registry-snapshot.json` 离线 fallback 路径。新增测试会实际解包、强制网络失败并
   验证该 snapshot fallback；真实 DSH E2E 仍通过。`pnpm run pack:check` 现同时对各 workspace
   和该临时候选执行无脚本 `npm pack --dry-run`。源码包依旧 `private: true`；没有 npm 发布、tag
   或可见性变更，也不会把本地 pack integrity 当作 registry integrity。owner 已确认公开
-  `@cordis-mp/web@0.1.0`、`latest`、`dev-assistant` 分类，以及 MIT
+  `@webcasa/web@0.1.0`、`latest`、`dev-assistant` 分类，以及 MIT
   `Copyright (c) 2026 www.Web.Casa`；私有源码 manifest 现声明 `MIT`，且公开候选显式包含 `LICENSE`。
   `pnpm run release:public-check` 是 opt-in 本地门禁：完成 build 后会生成候选并复核 archive 与 npm
   无脚本、离线 dry-run 文件清单；现在预期 ready，且不触发 npm/GitHub/数据库/部署 mutation。实际
@@ -114,18 +114,20 @@
   fail-closed。同步与提交验证新增 latest bundle 防陈旧 root 字段测试；父仓库为
   363/363 单测与生产构建通过。
 - 生产只读复核（2026-08-19）：`/api/v1/plugins?platform=desktop&limit=1` 仍为
-  `200 application/json`、含 ETag、`count=0`；npm registry 中 `@cordis-mp/web`
+  `200 application/json`、含 ETag、`count=0`；npm registry 中 `@webcasa/web`
   仍为 404。因而没有实际生产条目，也没有把结构 probe 误报为生产安装 E2E。
 
 ## 未完成事项
-1. 已确认公开 `@cordis-mp/web@0.1.0`、`latest`、`dev-assistant`、MIT、direct interactive/2FA
-   bootstrap 与 `web-casa/DeepSeek-Harness-Marketplace-Cordis`。仍需提交并 push OIDC workflow、执行首个
-   npm 发布；包存在后，保护 GitHub `npm` environment、配置/复核 `npm trust`，并确认 maintainer 列表后
-   才能让后续版本从 GitHub Actions 发布。父仓库的 Apache-2.0 文件没有被复制或套用。
+1. 已确认公开 `@webcasa/web@0.1.0`、`latest`、`dev-assistant`、MIT、direct interactive/2FA
+   bootstrap 与 `web-casa/DeepSeek-Harness-Marketplace-Cordis`。由于 npm 明确拒绝不存在的
+   `@cordis-mp` scope，owner 已将公开候选迁移至其现有 user scope `@webcasa`；先前 OIDC workflow 已
+   提交并 push 到 `main`，仍需提交并 push 该迁移、执行首个 npm 发布。包存在后，保护 GitHub `npm`
+   environment、配置/复核 `npm trust`，并确认 maintainer 列表后才能让后续版本从 GitHub Actions 发布。
+   父仓库的 Apache-2.0 文件没有被复制或套用。
 2. 发布后，先运行父仓库的只读预检
-   `pnpm plugins:sync -- --pkg=@cordis-mp/web --dry-run --no-assets`；仅在它报告 strict
+   `pnpm plugins:sync -- --pkg=@webcasa/web --dry-run --no-assets`；仅在它报告 strict
    artifact ready 后，使用 owner 确认的分类运行
-   `pnpm plugins:sync -- --pkg=@cordis-mp/web --category=<owner-approved-cordis-category> --no-assets`。
+   `pnpm plugins:sync -- --pkg=@webcasa/web --category=<owner-approved-cordis-category> --no-assets`。
    然后确认生产 `count>0`、运行目标 API probe 和真实生产 API DSH E2E。不得从包名、README
    或 `bundle.patch` 反推 version/sha512/tarball。
 3. 以已审核公开 slug 运行 Desktop 的 `CORDIS_MARKET_PROBE_SLUG=<slug> pnpm verify:cordis-market`；
@@ -146,7 +148,7 @@
 - 公开发布候选本地门禁（MIT source/`LICENSE` 就绪后应为 `ready`）：
   `pnpm run release:public-check`
 - 发布后单包只读 registry 预检（在父仓库）：
-  `pnpm plugins:sync -- --pkg=@cordis-mp/web --dry-run --no-assets`
+  `pnpm plugins:sync -- --pkg=@webcasa/web --dry-run --no-assets`
 - Desktop 生产只读 smoke（在 Desktop 仓库）：`pnpm verify:cordis-preset && pnpm verify:cordis-market`
 - CI 工作流静态校验：`actionlint .github/workflows/ci.yml .github/workflows/publish.yml`
 

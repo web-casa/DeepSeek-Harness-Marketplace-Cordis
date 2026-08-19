@@ -44,6 +44,8 @@ test('release candidate packer fails closed when private source metadata loses a
 
 test('public release gate validates the owner-approved source and still rejects missing legal metadata', () => {
   const sourceManifest = JSON.parse(readFileSync(join(app, '..', 'package.json'), 'utf8'))
+  assert.equal(sourceManifest.name, '@webcasa/web')
+  assert.equal(readFileSync(join(app, '..', 'cordis.patch.yml'), 'utf8'), "- insert:\n    - id: cordis-mp\n      name: '@webcasa/web'\n")
   assert.equal(releaseManifestProblem(sourceManifest), null)
   assert.equal(publicReleaseManifestProblem(sourceManifest), null)
   assert.equal(publicReleaseArtifactProblem(join(app, '..'), sourceManifest), null)
@@ -129,9 +131,9 @@ test('public release check emits a GitHub Actions artifact output only after val
     assert.equal(result.status, 0, result.stderr)
     const ready = JSON.parse(result.stdout)
     assert.equal(ready.status, 'ready')
-    assert.equal(ready.package, '@cordis-mp/web@0.1.0')
+    assert.equal(ready.package, '@webcasa/web@0.1.0')
     artifactDir = dirname(ready.artifact)
-    assert.equal(basename(ready.artifact), 'cordis-mp-web-release-candidate.tgz')
+    assert.equal(basename(ready.artifact), 'webcasa-web-release-candidate.tgz')
     assert.ok(artifactDir.startsWith(join(tmpdir(), 'cordis-web-pack-')))
     const manifest = JSON.parse(execFileSync('tar', ['-xOzf', ready.artifact, 'package/package.json'], { encoding: 'utf8' }))
     assert.deepEqual(manifest.repository, {
@@ -139,6 +141,10 @@ test('public release check emits a GitHub Actions artifact output only after val
       url: 'git+https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis.git',
     })
     assert.deepEqual(manifest.publishConfig, { access: 'public', tag: 'latest' })
+    assert.equal(
+      execFileSync('tar', ['-xOzf', ready.artifact, 'package/cordis.patch.yml'], { encoding: 'utf8' }),
+      `- insert:\n    - id: cordis-mp\n      name: '${manifest.name}'\n`,
+    )
     const outputs = new Map(readFileSync(output, 'utf8').trim().split('\n').map((line) => line.split(/=(.*)/s)))
     assert.equal(outputs.get('artifact'), ready.artifact)
     assert.equal(outputs.get('package'), ready.package)

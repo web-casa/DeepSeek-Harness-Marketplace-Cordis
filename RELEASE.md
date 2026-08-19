@@ -2,14 +2,18 @@
 
 ## Current release candidate
 
-- Version: `0.1.0` (root, six core workspaces, and `@cordis-mp/web` are aligned).
+- Version: `0.1.0` (root, six core workspaces, and `@webcasa/web` are aligned).
 - Status: a locally verified standalone implementation candidate exists; no npm
   publication, tag, or visibility change has been performed. Its owner-approved
-  GitHub remote is configured locally; it is awaiting the direct first-package
-  bootstrap, then npm Trusted Publishing configuration.
+  GitHub remote and reviewed OIDC workflow are pushed to `main`; it is awaiting
+  the direct first-package bootstrap, then npm Trusted Publishing configuration.
 - Package policy: every source workspace remains `private: true`. The only
-  intended public package is the generated, dependency-free `@cordis-mp/web`
+  intended public package is the generated, dependency-free `@webcasa/web`
   candidate at `0.1.0`, using dist-tag `latest`.
+- Scope decision: the direct bootstrap reached npm's authenticated write path,
+  where npm rejected the unowned `@cordis-mp` organization scope before any
+  package write. The owner then selected the existing `@webcasa` user scope;
+  this changes no internal workspace package, DSH plugin id, or install policy.
 - Legal metadata: the owner selected MIT and authorized `Copyright (c) 2026
   www.Web.Casa`. `apps/web/package.json` declares `MIT` and its checked-in
   `LICENSE` is explicitly bundled into the public candidate. This is a packaging
@@ -23,7 +27,7 @@
 
 ## Artifact boundary
 
-`@cordis-mp/web` is the DSH plugin deliverable. Its normal workspace manifest deliberately
+`@webcasa/web` is the DSH plugin deliverable. Its normal workspace manifest deliberately
 remains private and contains `workspace:*` dependencies. The self-contained DSH packer turns
 it into a separate candidate manifest with no workspace dependencies, `private: false`,
 `dist/index.js`/`dist/client.js`, `data/registry-snapshot.json`, and the declared DSH
@@ -76,7 +80,7 @@ the legal choice and validity of its license expression.
 
 ## Configure Trusted Publishing after the bootstrap
 
-Only after `@cordis-mp/web@0.1.0` exists on npm and the reviewed `publish.yml`
+Only after `@webcasa/web@0.1.0` exists on npm and the reviewed `publish.yml`
 has been pushed to the exact GitHub repository:
 
 1. Create the GitHub `npm` environment and require the intended release
@@ -84,14 +88,14 @@ has been pushed to the exact GitHub repository:
 2. With the owning npm account and 2FA, configure the one allowed publisher:
 
    ```bash
-   npm trust github @cordis-mp/web \
+   npm trust github @webcasa/web \
      --repo web-casa/DeepSeek-Harness-Marketplace-Cordis \
      --file publish.yml \
      --env npm \
      --allow-publish
    ```
 
-3. Verify the recorded relationship with `npm trust list @cordis-mp/web`, then
+3. Verify the recorded relationship with `npm trust list @webcasa/web`, then
    manually dispatch `publish.yml` only from a reviewed `main` commit. The
    token-free validation job reruns workspace tests, pack validation, host
    smoke, DSH smoke, staged-install E2E, and public-candidate validation. The
@@ -108,7 +112,7 @@ the approved package, use the parent repository's read-only registry preflight b
 database synchronization:
 
 ```bash
-pnpm plugins:sync -- --pkg=@cordis-mp/web --dry-run --no-assets
+pnpm plugins:sync -- --pkg=@webcasa/web --dry-run --no-assets
 ```
 
 It fetches the npm packument only and exits nonzero unless the requested name, exact latest
@@ -121,7 +125,7 @@ The owner must then choose an already configured Cordis category.  Only the expl
 command accepts that category, and it honors `--no-assets`:
 
 ```bash
-pnpm plugins:sync -- --pkg=@cordis-mp/web \
+pnpm plugins:sync -- --pkg=@webcasa/web \
   --category=<owner-approved-cordis-category> --no-assets
 ```
 
@@ -136,7 +140,7 @@ approved all of the following:
 
 1. Public package set and dependency publication order. For the current release
    design, the only intended public package is the generated self-contained
-   `@cordis-mp/web` candidate: it has no workspace dependencies, while every
+   `@webcasa/web` candidate: it has no workspace dependencies, while every
    source workspace stays private. A package rename or additional public package
    is a separate migration and review.
 2. Candidate README, license file and declaration, ownership/access, npm

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       expected_release:
-        description: Type the reviewed package and version exactly (for example, @cordis-mp/web@0.1.0).
+        description: Type the reviewed package and version exactly (for example, @webcasa/web@0.1.0).
         required: true
-        default: '@cordis-mp/web@0.1.0'
+        default: '@webcasa/web@0.1.0'
         type: string
       confirm_publish:
         description: Confirm that the protected npm environment has approved this public publication.
@@ -96,7 +96,7 @@ jobs:
             throw new Error('validated candidate artifact output is missing')
           }
           const directory = 'release-artifact'
-          const tarball = join(directory, 'cordis-mp-web-release-candidate.tgz')
+          const tarball = join(directory, 'webcasa-web-release-candidate.tgz')
           mkdirSync(directory, { recursive: true })
           copyFileSync(process.env.ARTIFACT, tarball)
           const sha512 = createHash('sha512').update(readFileSync(tarball)).digest('hex')
@@ -106,7 +106,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cordis-public-release-candidate
-          path: release-artifact/cordis-mp-web-release-candidate.tgz
+          path: release-artifact/webcasa-web-release-candidate.tgz
           if-no-files-found: error
           retention-days: 1
 
@@ -149,7 +149,7 @@ jobs:
           import { createHash } from 'node:crypto'
           import { lstatSync, readFileSync } from 'node:fs'
 
-          const tarball = 'release-artifact/cordis-mp-web-release-candidate.tgz'
+          const tarball = 'release-artifact/webcasa-web-release-candidate.tgz'
           if (!/^[a-f0-9]{128}$/.test(process.env.EXPECTED_SHA512 ?? '')) {
             throw new Error('validated candidate SHA-512 output is malformed')
           }
@@ -160,4 +160,4 @@ jobs:
           NODE
       - name: Publish through npm Trusted Publishing
         # No checkout, install, or NODE_AUTH_TOKEN: only this job can exchange the GitHub OIDC token.
-        run: npm publish release-artifact/cordis-mp-web-release-candidate.tgz --access public --tag latest --provenance --ignore-scripts
+        run: npm publish release-artifact/webcasa-web-release-candidate.tgz --access public --tag latest --provenance --ignore-scripts

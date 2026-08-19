@@ -1,4 +1,4 @@
-// @cordis-mp/web host：DSH Web 插件入口。
+// @webcasa/web host：DSH Web 插件入口。
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CatalogClient } from '@cordis-mp/catalog-core'

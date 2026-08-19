@@ -4,7 +4,7 @@ Date: 2026-08-20
 
 ## Scope reviewed
 
-- Exact GitHub repository metadata and public/latest candidate metadata.
+- Exact GitHub repository metadata and public/latest `@webcasa/web` candidate metadata.
 - `.github/workflows/publish.yml` and its npm Trusted Publishing boundary.
 - Operator documentation for direct bootstrap followed by OIDC.
 
@@ -48,9 +48,8 @@ Date: 2026-08-20
 
 ## Deliberately deferred external mutations
 
-- Commit and push this reviewed slice to the owner-supplied empty remote.
 - Perform the owner-approved direct interactive/2FA first publication of
-  `@cordis-mp/web@0.1.0`; it is a bootstrap, not an OIDC-provenance release.
+  `@webcasa/web@0.1.0`; it is a bootstrap, not an OIDC-provenance release.
 - Configure the GitHub `npm` environment and `npm trust github` only after the
   package exists, then use the protected OIDC workflow for later versions.
 - Run registry sync, production catalog verification, and production DSH/Desktop

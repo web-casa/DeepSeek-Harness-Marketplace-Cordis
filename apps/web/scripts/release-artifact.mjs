@@ -159,7 +159,7 @@ export function createReleaseArtifact(appDir, { publicRelease = false } = {}) {
     copyFileSync(join(appDir, PUBLIC_RELEASE_LICENSE_FILE), join(packageDir, PUBLIC_RELEASE_LICENSE_FILE))
   }
 
-  const out = join(pack, 'cordis-mp-web-release-candidate.tgz')
+  const out = join(pack, 'webcasa-web-release-candidate.tgz')
   execFileSync('tar', ['-czf', out, '-C', pack, 'package'])
   return out
 }

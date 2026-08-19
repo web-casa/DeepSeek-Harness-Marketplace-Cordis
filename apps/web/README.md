@@ -1,4 +1,4 @@
-# @cordis-mp/web
+# @webcasa/web
 
 Cordis marketplace plugin for DeepSeek Harness (DSH). The locally verified
 standalone candidate bundles the marketplace host and client, while keeping the plugin's
@@ -38,7 +38,7 @@ The tarball contains `dist/index.js`, `dist/client.js`, the root-level
 required for the host's offline snapshot fallback to resolve correctly.
 
 No npm publication is performed by these commands. The owner has approved the
-public `@cordis-mp/web@0.1.0` candidate, dist-tag `latest`, the `dev-assistant`
+public `@webcasa/web@0.1.0` candidate, dist-tag `latest`, the `dev-assistant`
 Cordis category, and MIT with `Copyright (c) 2026 www.Web.Casa`. The workspace
 source deliberately remains private; only its generated, dependency-free
 candidate is publishable.
