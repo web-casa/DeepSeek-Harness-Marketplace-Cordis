@@ -4,8 +4,9 @@
 
 - Version: `0.1.0` (root, six core workspaces, and `@cordis-mp/web` are aligned).
 - Status: a locally verified standalone implementation candidate exists; no npm
-  publication, tag, or visibility change has been performed. It is awaiting an
-  owner-confirmed GitHub remote and npm Trusted Publishing configuration.
+  publication, tag, or visibility change has been performed. Its owner-approved
+  GitHub remote is configured locally; it is awaiting the direct first-package
+  bootstrap, then npm Trusted Publishing configuration.
 - Package policy: every source workspace remains `private: true`. The only
   intended public package is the generated, dependency-free `@cordis-mp/web`
   candidate at `0.1.0`, using dist-tag `latest`.
@@ -13,10 +14,12 @@
   www.Web.Casa`. `apps/web/package.json` declares `MIT` and its checked-in
   `LICENSE` is explicitly bundled into the public candidate. This is a packaging
   record, not independent legal advice.
-- Trusted Publishing is selected for future releases. npm requires a package
-  to exist before its trusted publisher can be configured, so `0.1.0` needs a
-  separately owner-approved interactive/2FA or staged bootstrap publication.
-  Do not silently substitute that bootstrap for OIDC or claim it has provenance.
+- Trusted Publishing is selected for future releases. The candidate pins
+  `repository.url` to `web-casa/DeepSeek-Harness-Marketplace-Cordis`, and the
+  manual-only `.github/workflows/publish.yml` has the required OIDC permission
+  and exact-repository check. npm requires a package to exist before its trusted
+  publisher can be configured, so `0.1.0` needs the owner-approved direct
+  interactive/2FA bootstrap. Do not claim that bootstrap has OIDC provenance.
 
 ## Artifact boundary
 
@@ -70,6 +73,33 @@ non-`UNLICENSED` declaration, a regular non-empty `LICENSE` no larger than
 registry, GitHub, database, deployment, publish, tag, or visibility mutation.
 It verifies presence and candidate inclusion; the owner remains responsible for
 the legal choice and validity of its license expression.
+
+## Configure Trusted Publishing after the bootstrap
+
+Only after `@cordis-mp/web@0.1.0` exists on npm and the reviewed `publish.yml`
+has been pushed to the exact GitHub repository:
+
+1. Create the GitHub `npm` environment and require the intended release
+   approvers. Keep the repository public if npm provenance is required.
+2. With the owning npm account and 2FA, configure the one allowed publisher:
+
+   ```bash
+   npm trust github @cordis-mp/web \
+     --repo web-casa/DeepSeek-Harness-Marketplace-Cordis \
+     --file publish.yml \
+     --env npm \
+     --allow-publish
+   ```
+
+3. Verify the recorded relationship with `npm trust list @cordis-mp/web`, then
+   manually dispatch `publish.yml` only from a reviewed `main` commit. The
+   token-free validation job reruns workspace tests, pack validation, host
+   smoke, DSH smoke, staged-install E2E, and public-candidate validation. The
+   OIDC-only job then downloads the SHA-512-verified tarball without checkout
+   or dependency installation, and publishes it with no npm token.
+
+`npm trust` changes registry configuration and may require interactive 2FA; it
+is deliberately not part of a local helper or this document's read-only checks.
 
 ## After an owner-approved npm publication
 

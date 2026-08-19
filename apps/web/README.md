@@ -48,12 +48,21 @@ root. It locally verifies the declaration, bounded regular `LICENSE` file,
 generated candidate, and npm's script-free offline dry-run file list; it does
 not publish or contact a registry.
 
-Trusted Publishing is the selected publication mechanism. It still needs the
-owner-confirmed GitHub remote, matching candidate `repository.url`, and npm
-trusted-publisher configuration. npm requires a package to exist before a
-Trusted Publisher can be configured, so this initial `0.1.0` release also needs
-an owner-approved interactive/2FA or staged bootstrap publication. Subsequent
-releases can then be restricted to OIDC. Once npm has published the candidate,
-run the parent repository's registry sync so cordis.run can capture the
-registry's exact tarball URL and SHA-512 integrity; hand-written catalog source
-data is not accepted.
+Trusted Publishing is selected for releases after the first bootstrap.
+`repository.url` is pinned to
+`web-casa/DeepSeek-Harness-Marketplace-Cordis`, and the checked-in manual-only
+`.github/workflows/publish.yml` validates that exact repository before it
+publishes with GitHub OIDC. It runs only from `main`; protect that branch and
+its `npm` environment before enabling the workflow. Validation, dependency
+installation, build, pack and DSH E2E run without an OIDC token; a separate
+job downloads the SHA-512-verified tarball and is the only job allowed to
+exchange an OIDC token for publication.
+
+npm requires a package to exist before a Trusted Publisher can be configured,
+so the initial `0.1.0` release needs the separately owner-approved
+interactive/2FA bootstrap. After that release exists, configure its publisher
+with the exact remote and workflow filename, then use the protected workflow
+for later versions. Once npm has published the candidate, run the parent
+repository's registry sync so cordis.run can capture the registry's exact
+tarball URL and SHA-512 integrity; hand-written catalog source data is not
+accepted.

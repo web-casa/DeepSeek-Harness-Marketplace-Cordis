@@ -101,9 +101,11 @@
   `Copyright (c) 2026 www.Web.Casa`；私有源码 manifest 现声明 `MIT`，且公开候选显式包含 `LICENSE`。
   `pnpm run release:public-check` 是 opt-in 本地门禁：完成 build 后会生成候选并复核 archive 与 npm
   无脚本、离线 dry-run 文件清单；现在预期 ready，且不触发 npm/GitHub/数据库/部署 mutation。实际
-  Trusted Publishing 仍需 owner 确认的 GitHub remote、匹配的 `repository.url` 与 npm publisher 配置；npm
-  要求包已存在才能配置 publisher，因此首个 `0.1.0` 还需单独授权的 interactive/2FA 或 staged bootstrap，
-  后续版本才可锁定 OIDC。
+  本地 `origin` 已指向 owner 确认的 GitHub remote，候选现携带匹配的 `repository.url`、公开 `latest`
+  `publishConfig`，并有手动触发、`npm` environment 门禁、精确 repo 复核和 `id-token: write` 的
+  `publish.yml`；它只允许 `main`，先在无 OIDC token 的 job 重跑 workspace/pack/host/DSH E2E，再由唯一
+  `id-token: write` job 下载 SHA-512 复核后的 tarball 发布。npm 要求包已存在才能配置 publisher，因此 owner
+  已授权的首个 `0.1.0` interactive/2FA bootstrap 仍需在 push 后执行；后续版本才能配置并锁定 OIDC。
 - 父仓库的单包 npm 同步现有独立只读预检：
   `pnpm plugins:sync -- --pkg=<package> --dry-run --no-assets` 只读取 npm
   packument，并要求包名、latest `dsh.bundle`、精确 version/SHA-512/tarball/
@@ -116,10 +118,10 @@
   仍为 404。因而没有实际生产条目，也没有把结构 probe 误报为生产安装 E2E。
 
 ## 未完成事项
-1. 已确认公开 `@cordis-mp/web@0.1.0`、`latest`、`dev-assistant`、MIT 与 Trusted Publishing；仍需
-   单独确认首个版本的 interactive/2FA 或 staged bootstrap，并提供独立仓库的 GitHub remote、在候选加入
-   精确匹配的 `repository.url`、配置 npm trusted publisher，并确认 maintainer 列表后才能让后续版本从
-   GitHub Actions 发布。父仓库的 Apache-2.0 文件没有被复制或套用。
+1. 已确认公开 `@cordis-mp/web@0.1.0`、`latest`、`dev-assistant`、MIT、direct interactive/2FA
+   bootstrap 与 `web-casa/DeepSeek-Harness-Marketplace-Cordis`。仍需提交并 push OIDC workflow、执行首个
+   npm 发布；包存在后，保护 GitHub `npm` environment、配置/复核 `npm trust`，并确认 maintainer 列表后
+   才能让后续版本从 GitHub Actions 发布。父仓库的 Apache-2.0 文件没有被复制或套用。
 2. 发布后，先运行父仓库的只读预检
    `pnpm plugins:sync -- --pkg=@cordis-mp/web --dry-run --no-assets`；仅在它报告 strict
    artifact ready 后，使用 owner 确认的分类运行
@@ -146,7 +148,7 @@
 - 发布后单包只读 registry 预检（在父仓库）：
   `pnpm plugins:sync -- --pkg=@cordis-mp/web --dry-run --no-assets`
 - Desktop 生产只读 smoke（在 Desktop 仓库）：`pnpm verify:cordis-preset && pnpm verify:cordis-market`
-- CI 工作流静态校验：`actionlint .github/workflows/ci.yml`
+- CI 工作流静态校验：`actionlint .github/workflows/ci.yml .github/workflows/publish.yml`
 
 ## 关键文档
 - PLAN-*.md / M2A-*.md / JOURNAL-SPEC.md / REVIEWS.md / SELF-REVIEW-*.md

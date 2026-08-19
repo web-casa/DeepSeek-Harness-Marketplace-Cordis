@@ -133,6 +133,12 @@ test('public release check emits a GitHub Actions artifact output only after val
     artifactDir = dirname(ready.artifact)
     assert.equal(basename(ready.artifact), 'cordis-mp-web-release-candidate.tgz')
     assert.ok(artifactDir.startsWith(join(tmpdir(), 'cordis-web-pack-')))
+    const manifest = JSON.parse(execFileSync('tar', ['-xOzf', ready.artifact, 'package/package.json'], { encoding: 'utf8' }))
+    assert.deepEqual(manifest.repository, {
+      type: 'git',
+      url: 'git+https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis.git',
+    })
+    assert.deepEqual(manifest.publishConfig, { access: 'public', tag: 'latest' })
     const outputs = new Map(readFileSync(output, 'utf8').trim().split('\n').map((line) => line.split(/=(.*)/s)))
     assert.equal(outputs.get('artifact'), ready.artifact)
     assert.equal(outputs.get('package'), ready.package)

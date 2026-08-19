@@ -3,6 +3,18 @@
   "version": "0.1.0",
   "description": "Cordis marketplace plugin for DeepSeek Harness",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis.git"
+  },
+  "homepage": "https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis#readme",
+  "bugs": {
+    "url": "https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
+  },
   "private": true,
   "type": "module",
   "main": "src/index.js",

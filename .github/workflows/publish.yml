@@ -1,0 +1,163 @@
+name: Publish public Web candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_release:
+        description: Type the reviewed package and version exactly (for example, @cordis-mp/web@0.1.0).
+        required: true
+        default: '@cordis-mp/web@0.1.0'
+        type: string
+      confirm_publish:
+        description: Confirm that the protected npm environment has approved this public publication.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  CI: 'true'
+  npm_config_audit: 'false'
+  npm_config_fund: 'false'
+
+jobs:
+  validate:
+    if: ${{ inputs.confirm_publish && github.ref == 'refs/heads/main' }}
+    name: Validate public candidate without publish identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      release: ${{ steps.candidate.outputs.package }}
+      sha512: ${{ steps.stage.outputs.sha512 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 11.10.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.18.0
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+      - name: Test workspace
+        run: pnpm -r test
+      - name: Build Web plugin
+        run: node apps/web/scripts/build.mjs
+      - name: Validate npm pack metadata
+        run: pnpm run pack:check
+      - name: Run host smoke
+        run: node scripts/host-smoke.mjs
+      - name: Run DSH smoke
+        run: node scripts/dsh-smoke.mjs
+      - name: Run DSH install/activate/restart E2E
+        run: node scripts/dsh-e2e-install.mjs
+      - name: Validate public candidate
+        id: candidate
+        run: pnpm run release:public-check
+      - name: Check reviewed release and repository identity
+        env:
+          EXPECTED_RELEASE: ${{ inputs.expected_release }}
+          CANDIDATE_RELEASE: ${{ steps.candidate.outputs.package }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs'
+
+          const source = JSON.parse(readFileSync('apps/web/package.json', 'utf8'))
+          const release = `${source.name}@${source.version}`
+          const expectedRepositoryUrl = `git+https://github.com/${process.env.EXPECTED_REPOSITORY}.git`
+          if (process.env.EXPECTED_RELEASE !== release || process.env.CANDIDATE_RELEASE !== release) {
+            throw new Error(`reviewed release mismatch: expected ${process.env.EXPECTED_RELEASE}, candidate ${process.env.CANDIDATE_RELEASE}, source ${release}`)
+          }
+          if (source.repository?.type !== 'git' || source.repository.url !== expectedRepositoryUrl) {
+            throw new Error(`repository.url must equal ${expectedRepositoryUrl}`)
+          }
+          console.log(`Validated ${release} from ${process.env.EXPECTED_REPOSITORY}`)
+          NODE
+      - name: Stage candidate and record SHA-512
+        id: stage
+        env:
+          ARTIFACT: ${{ steps.candidate.outputs.artifact }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto'
+          import { appendFileSync, copyFileSync, mkdirSync, readFileSync } from 'node:fs'
+          import { join } from 'node:path'
+
+          if (typeof process.env.ARTIFACT !== 'string' || process.env.ARTIFACT.length === 0) {
+            throw new Error('validated candidate artifact output is missing')
+          }
+          const directory = 'release-artifact'
+          const tarball = join(directory, 'cordis-mp-web-release-candidate.tgz')
+          mkdirSync(directory, { recursive: true })
+          copyFileSync(process.env.ARTIFACT, tarball)
+          const sha512 = createHash('sha512').update(readFileSync(tarball)).digest('hex')
+          appendFileSync(process.env.GITHUB_OUTPUT, `sha512=${sha512}\n`, 'utf8')
+          console.log(`Staged ${tarball} with SHA-512 ${sha512}`)
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cordis-public-release-candidate
+          path: release-artifact/cordis-mp-web-release-candidate.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: validate
+    if: ${{ needs.validate.result == 'success' && inputs.confirm_publish && github.ref == 'refs/heads/main' }}
+    name: Publish staged candidate through npm Trusted Publishing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.18.0
+          registry-url: https://registry.npmjs.org
+      - name: Verify Trusted Publishing toolchain
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process'
+
+          const version = execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim()
+          const [major, minor = 0] = version.split('.').map(Number)
+          if (!Number.isInteger(major) || !Number.isInteger(minor) || major < 11 || (major === 11 && minor < 5)) {
+            throw new Error(`npm@11.5.1 or newer is required for Trusted Publishing; found ${version}`)
+          }
+          console.log(`Trusted Publishing toolchain: node ${process.version}, npm ${version}`)
+          NODE
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cordis-public-release-candidate
+          path: release-artifact
+      - name: Verify downloaded candidate SHA-512
+        env:
+          EXPECTED_SHA512: ${{ needs.validate.outputs.sha512 }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto'
+          import { lstatSync, readFileSync } from 'node:fs'
+
+          const tarball = 'release-artifact/cordis-mp-web-release-candidate.tgz'
+          if (!/^[a-f0-9]{128}$/.test(process.env.EXPECTED_SHA512 ?? '')) {
+            throw new Error('validated candidate SHA-512 output is malformed')
+          }
+          if (!lstatSync(tarball).isFile()) throw new Error('downloaded candidate is not a regular file')
+          const sha512 = createHash('sha512').update(readFileSync(tarball)).digest('hex')
+          if (sha512 !== process.env.EXPECTED_SHA512) throw new Error('downloaded candidate SHA-512 mismatch')
+          console.log(`Verified candidate SHA-512 ${sha512}`)
+          NODE
+      - name: Publish through npm Trusted Publishing
+        # No checkout, install, or NODE_AUTH_TOKEN: only this job can exchange the GitHub OIDC token.
+        run: npm publish release-artifact/cordis-mp-web-release-candidate.tgz --access public --tag latest --provenance --ignore-scripts
