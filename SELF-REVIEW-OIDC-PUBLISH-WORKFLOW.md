@@ -38,7 +38,9 @@ Date: 2026-08-20
 
 ## Validation
 
-- `pnpm -r test` — 164/164 pass; journal-core POSIX FULL 96/96.
+- At the original workflow-review point, `pnpm -r test` — 164/164 pass;
+  journal-core POSIX FULL 96/96. The subsequent `0.1.1` guard candidate is
+  covered by its own 166/166 final-validation record.
 - `pnpm run pack:check`, `pnpm run release:public-check`, host smoke, DSH
   smoke, and DSH install/activate/restart E2E — pass.
 - `actionlint .github/workflows/ci.yml .github/workflows/publish.yml` and
@@ -46,11 +48,15 @@ Date: 2026-08-20
 - The final generated candidate passed authenticated
   `npm publish --dry-run --ignore-scripts --access public --tag latest`.
 
-## Deliberately deferred external mutations
+## Execution update — 2026-08-20
 
-- Perform the owner-approved direct interactive/2FA first publication of
-  `@webcasa/web@0.1.0`; it is a bootstrap, not an OIDC-provenance release.
-- Configure the GitHub `npm` environment and `npm trust github` only after the
-  package exists, then use the protected OIDC workflow for later versions.
-- Run registry sync, production catalog verification, and production DSH/Desktop
-  E2E only after the package is actually present in npm.
+- The owner-approved direct interactive/2FA bootstrap published
+  `@webcasa/web@0.1.0` with `latest` and public access. It is explicitly a
+  bootstrap rather than an OIDC-provenance release.
+- Parent strict registry preflight, `dev-assistant` synchronization, and the
+  production API contract probe succeeded with `count=1`.
+- The GitHub `npm` environment still needs owner-selected human approvers, then
+  `npm trust github` must be configured and verified. The next intended release
+  is `@webcasa/web@0.1.1`, not a replacement of immutable `0.1.0`.
+- A positive production DSH/Desktop lifecycle E2E remains pending an independent
+  strict public plugin; the market host self-target is intentionally refused.

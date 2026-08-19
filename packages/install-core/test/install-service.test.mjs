@@ -90,6 +90,93 @@ test('blocked entry is not installable', async () => {
   await assert.rejects(() => c.service.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } }), e => e.code === 'NOT_INSTALLABLE' && /blocked/.test(e.message))
 })
 
+test('marketplace host rejects its own package before inspect, pre-disable, journal, or package mutation', async () => {
+  const c = setup()
+  let inspected = false
+  let journalStarted = false
+  let prepared = false
+  let disabled = false
+  let installed = false
+  const activation = {
+    async prepareDisable() { prepared = true; return { entryIds: ['p'] } },
+    async preDisable() { disabled = true },
+    async cancelDisable() {},
+    async activate() {},
+  }
+  const inspect = { async inspectArtifact() { inspected = true; return { entryIds: ['p'] } } }
+  c.journal.begin = async () => { journalStarted = true; throw new Error('journal must not start') }
+  const service = new InstallService({
+    catalog: c.catalog,
+    journal: c.journal,
+    packageManager: {
+      ...c.packageManager,
+      async installVerifiedArtifact() { installed = true; return { exitCode: 0, profileFiles: {} } },
+    },
+    activation,
+    inspect,
+    lock: c.lock,
+    selfPackageName: 'p',
+  })
+
+  await assert.rejects(
+    () => service.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } }),
+    error => error.code === 'SELF_INSTALL_FORBIDDEN',
+  )
+  assert.equal(inspected, false)
+  assert.equal(journalStarted, false)
+  assert.equal(prepared, false)
+  assert.equal(disabled, false)
+  assert.equal(installed, false)
+  assert.equal(readFileSync(join(c.profile, 'package.json'), 'utf8'), '{"old":true}')
+})
+
+test('a foreign bundle cannot pre-disable the marketplace host entry and its staged artifact is cleaned', async () => {
+  const c = setup()
+  c.fresh.source.packageName = 'foreign-package'
+  let inspected = false
+  let cleaned = false
+  let journalStarted = false
+  let prepared = false
+  let disabled = false
+  let installed = false
+  c.journal.begin = async () => { journalStarted = true; throw new Error('journal must not start') }
+  const activation = {
+    async prepareDisable() { prepared = true; return { entryIds: ['cordis-mp'] } },
+    async preDisable() { disabled = true },
+    async cancelDisable() {},
+    async activate() {},
+  }
+  const inspect = {
+    async inspectArtifact() { inspected = true; return { entryIds: ['cordis-mp'], stagedPath: '/tmp/foreign-artifact' } },
+    cleanup(path) { assert.equal(path, '/tmp/foreign-artifact'); cleaned = true },
+  }
+  const service = new InstallService({
+    catalog: c.catalog,
+    journal: c.journal,
+    packageManager: {
+      ...c.packageManager,
+      async installVerifiedArtifact() { installed = true; return { exitCode: 0, profileFiles: {} } },
+    },
+    activation,
+    inspect,
+    lock: c.lock,
+    selfPackageName: '@webcasa/web',
+    selfEntryIds: ['cordis-mp'],
+  })
+
+  await assert.rejects(
+    () => service.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } }),
+    error => error.code === 'HOST_ENTRY_CONFLICT',
+  )
+  assert.equal(inspected, true)
+  assert.equal(cleaned, true)
+  assert.equal(journalStarted, false)
+  assert.equal(prepared, false)
+  assert.equal(disabled, false)
+  assert.equal(installed, false)
+  assert.equal(readFileSync(join(c.profile, 'package.json'), 'utf8'), '{"old":true}')
+})
+
 test('package manager failure leaves profile unchanged', async () => {
   const c = setup()
   c.packageManager.installVerifiedArtifact = async () => ({ exitCode: 1, stderr: 'boom' })

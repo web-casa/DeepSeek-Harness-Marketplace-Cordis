@@ -48,7 +48,7 @@ export function createMutationHandler({ installService, platform = 'web', guard 
       json(res, 404, { error: { code: 'NOT_FOUND', message: 'no such route' } })
     } catch (e) {
       if (e instanceof InstallError) {
-        const status = ['MUTATION_BUSY', 'MUTATION_FENCED'].includes(e.code) ? 409 : 400
+        const status = ['MUTATION_BUSY', 'MUTATION_FENCED', 'SELF_INSTALL_FORBIDDEN', 'HOST_ENTRY_CONFLICT'].includes(e.code) ? 409 : 400
         return json(res, status, { error: { code: e.code, message: e.message } })
       }
       if (e.code === 'BAD_JSON' || e.code === 'BODY_TOO_LARGE') return json(res, 400, { error: { code: e.code, message: e.message } })

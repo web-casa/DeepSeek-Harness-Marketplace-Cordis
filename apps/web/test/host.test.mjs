@@ -18,6 +18,8 @@ test('createRuntime wires real ports with expected paths', async () => {
   assert.equal(rt.activation.patchPath, join(dir, 'cordis.patch.yml'))
   assert.equal(rt.inspect.cacheDir, join(dir, '.cordis-mp', 'artifacts'))
   assert.equal(rt.installService.pendingPath, join(dir, '.cordis-mp'))
+  assert.equal(rt.installService.selfPackageName, '@webcasa/web')
+  assert.deepEqual(rt.installService.selfEntryIds, ['cordis-mp'])
   assert.ok(rt.installService.inspect)
   assert.ok(rt.installService.activation)
 })

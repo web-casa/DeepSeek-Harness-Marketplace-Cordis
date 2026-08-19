@@ -11,6 +11,7 @@ const fixture = fileURLToPath(new URL('../spikes/S1/fixture-server.mjs', import.
 const requestedApi = process.env.CORDIS_RUN_API?.replace(/\/+$/, '') || null
 const pluginSlug = process.env.CORDIS_E2E_SLUG || 'dsh-market'
 const pluginRoute = process.env.CORDIS_E2E_PLUGIN_ROUTE || '/dsh-market/registry'
+const expectSelfRefusal = process.env.CORDIS_E2E_EXPECT_SELF_REFUSAL === '1'
 
 function escapeRegExp(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
 function disabledInPatch(text, id) { return new RegExp(`- id: ${escapeRegExp(id)}\\s*\\n {2}disabled: true`).test(text) }
@@ -57,6 +58,20 @@ const entryRevision = detail.body.plugin.entryRevision
 console.log('install start', entryRevision)
 const install = await req('/cordis-mp/install', { method: 'POST', headers: auth, body: JSON.stringify({ slug: pluginSlug, entryRevision }) })
 console.log('install response', install.status, install.body)
+if (expectSelfRefusal) {
+  if (install.status !== 409 || install.body?.error?.code !== 'SELF_INSTALL_FORBIDDEN') {
+    console.error('expected self-install refusal before any profile mutation')
+    web.kill(); fixtureChild?.kill(); process.exit(1)
+  }
+  const patchPath = join(dshHome, 'profiles', 'web', 'cordis.patch.yml')
+  const patch = readFileSync(patchPath, 'utf8')
+  if (disabledInPatch(patch, 'cordis-mp')) {
+    console.error('self-install refusal must not pre-disable the marketplace host')
+    web.kill(); fixtureChild?.kill(); process.exit(1)
+  }
+  console.log('E2E SELF-INSTALL REFUSAL PASS')
+  web.kill(); fixtureChild?.kill(); process.exit(0)
+}
 if (install.status !== 200 || !install.body.pendingActivation) { console.error(out, err); process.exit(1) }
 const entryIds = install.body.pending?.entryIds
 if (!Array.isArray(entryIds) || entryIds.length === 0) { console.error('install response has no inspected entryIds'); process.exit(1) }

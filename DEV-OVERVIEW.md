@@ -44,7 +44,7 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
-- 164 tests / 164 pass。
+- 166 tests / 166 pass（`0.1.1` 候选完整本地门禁）。
 - 真实 DSH E2E PASS：install → patch disable → activate → restart → dsh-market
   路由 200。
 - `verifyInstalled` 已复核 `node_modules` manifest 的 name/version，及
@@ -59,11 +59,17 @@
   同域 `200 application/zip` 直出，不再 302。后续安全 review 已补上 R2 流式上限、审批状态
   的计数事务复核、异常 JSON/503 回退和分类成员变更 revision；父仓库 357/357 单测、生产构建
   、Docker `next start` 健康探针和临时 PostgreSQL 的真实 Next 契约探针均已通过。
-- 生产验收（2026-08-19）：`https://cordis.run/api/presets/code/download` 直接返回
-  `200 application/zip`（无 `Location`）；`/api/v1/plugins` 返回 v1 契约 JSON（含
-  `schemaVersion`、`count`、`page`、`items`）。当前严格目录 `count=0`，不是客户端或 DTO
-  问题：生产同步到的候选 npm metadata 缺少 API 发布所需的明确 DSH engine/platform + 完整
-  registry artifact 证据，因而被 fail-closed 排除。真实生产 API DSH E2E 尚不能声明通过。
+- 生产验收（2026-08-20）：`https://cordis.run/api/presets/code/download` 仍直接返回
+  `200 application/zip`（无 `Location`）。`@webcasa/web@0.1.0` 已以 direct interactive/2FA
+  bootstrap 公开发布为 `latest`，随后通过父仓库的 strict registry-only preflight，并以
+  `dev-assistant` 分类同步到生产目录。对 `https://cordis.run/api/v1` 的只读契约 probe 已验证
+  web/desktop 筛选、ETag/304、详情与 JSON 404，严格目录 `count=1`。
+- 生产 DSH 验收的结论必须区分：`0.1.0` 的真实目标试运行完成 inspect → pre-disable → install →
+  verify → pending，但因目标正是市场宿主自身，pre-disable 禁用了其 `/cordis-mp/activate` 路由，
+  activate 收到 405；这不是可接受的正向 E2E。修复后的 `0.1.1` 本地候选会在任何 inspect/journal/
+  pre-disable/package mutation 前拒绝同 npm 包名，并在 inspect 后拒绝任何宣称宿主 `cordis-mp`
+  entry id 的外部 bundle；使用真实生产目录的 self-refusal E2E 已验证 409 且 profile 未被禁用。
+  `0.1.1` 尚未发布，完整正向生产 DSH E2E 仍需要一个独立、严格合规的公开插件条目。
 - fixture 已对齐 cursor + `count/page`、`page/per_page` 兼容、ETag/304、JSON
   error、canonical screenshot；`scripts/cordis-run-contract-probe.mjs` 可在
   部署后做无 mutation 的目标验收，DSH E2E 也可显式通过 `CORDIS_RUN_API` 切换。
@@ -71,8 +77,9 @@
   ETag/304、JSON 404、严格 pending/explicit activate 与 preset 200 直出适配仍在。新增
   `pnpm verify:cordis-market` 只读生产 smoke，实际通过直接 JSON、ETag/304、JSON 404；
   `pnpm verify:cordis-preset` 也通过同域 `200 application/zip`；Rust nextest 为 sidecar 35/35、
-  Tauri 97/97，覆盖率门槛也已复核。当前 `count=0`，因此没有把
-  这次结构联调表述为 Desktop 安装 E2E；Microsoft Store allowlist 也保持不变。
+  Tauri 97/97，覆盖率门槛也已复核。生产目录现在有已同步条目，但尚未执行并记录 Desktop 的
+  install → pending → explicit Activate → restart E2E；不得以结构 smoke 代替该 E2E，Microsoft
+  Store allowlist 也保持不变。
 - Web 市场已提供详情弹窗、仅渲染 `https://cdn.cordis.run` 截图、cursor 历史分页、
   Web/Desktop 平台徽章及可展开的错误诊断（code/HTTP/request ID/retry）。安装和启用
   仍只经既有 guard-backed controller/API；页面不新增 mutation 通道。
@@ -95,17 +102,21 @@
   `pack-smoke` 生成无 workspace 依赖、可公开打包的独立候选，且保留 `dist/`，从而修复 host
   的 `../data/registry-snapshot.json` 离线 fallback 路径。新增测试会实际解包、强制网络失败并
   验证该 snapshot fallback；真实 DSH E2E 仍通过。`pnpm run pack:check` 现同时对各 workspace
-  和该临时候选执行无脚本 `npm pack --dry-run`。源码包依旧 `private: true`；没有 npm 发布、tag
-  或可见性变更，也不会把本地 pack integrity 当作 registry integrity。owner 已确认公开
+  和该临时候选执行无脚本 `npm pack --dry-run`。源码 workspace 依旧 `private: true`，不会直接 npm
+  发布、tag 或变更可见性，也不会把本地 pack integrity 当作 registry integrity；生成的 `0.1.0`
+  候选则已按下述记录公开发布。owner 已确认公开
   `@webcasa/web@0.1.0`、`latest`、`dev-assistant` 分类，以及 MIT
   `Copyright (c) 2026 www.Web.Casa`；私有源码 manifest 现声明 `MIT`，且公开候选显式包含 `LICENSE`。
   `pnpm run release:public-check` 是 opt-in 本地门禁：完成 build 后会生成候选并复核 archive 与 npm
-  无脚本、离线 dry-run 文件清单；现在预期 ready，且不触发 npm/GitHub/数据库/部署 mutation。实际
-  本地 `origin` 已指向 owner 确认的 GitHub remote，候选现携带匹配的 `repository.url`、公开 `latest`
-  `publishConfig`，并有手动触发、`npm` environment 门禁、精确 repo 复核和 `id-token: write` 的
-  `publish.yml`；它只允许 `main`，先在无 OIDC token 的 job 重跑 workspace/pack/host/DSH E2E，再由唯一
-  `id-token: write` job 下载 SHA-512 复核后的 tarball 发布。npm 要求包已存在才能配置 publisher，因此 owner
-  已授权的首个 `0.1.0` interactive/2FA bootstrap 仍需在 push 后执行；后续版本才能配置并锁定 OIDC。
+  无脚本、离线 dry-run 文件清单，不触发 npm/GitHub/数据库/部署 mutation。`0.1.0` 已完成 direct
+  interactive/2FA bootstrap（不是 OIDC provenance）。实际本地 `origin` 已指向 owner 确认的 GitHub
+  remote；`publish.yml` 只允许 `main`，先在无 OIDC token 的 job 重跑 workspace/pack/host/DSH E2E，再由唯一
+  `id-token: write` job 下载 SHA-512 复核后的 tarball 发布。待 GitHub `npm` environment 的人类审批者确认并
+  完成 `npm trust github` 后，`0.1.1` 才能通过该受保护的 Trusted Publishing 工作流发布。
+- `0.1.1` 候选最终本地验收（2026-08-20）已通过：166/166 workspace tests（其中 journal-core
+  POSIX FULL 96/96）、`pack:check`、`release:public-check`、host/DSH smoke、fixture 正向
+  install → pending → explicit activate → restart E2E、actionlint 与 `git diff --check`。其生成
+  tarball 的 script-free `npm publish --dry-run --access public --tag latest` 也通过；这不是发布。
 - 父仓库的单包 npm 同步现有独立只读预检：
   `pnpm plugins:sync -- --pkg=<package> --dry-run --no-assets` 只读取 npm
   packument，并要求包名、latest `dsh.bundle`、精确 version/SHA-512/tarball/
@@ -113,34 +124,33 @@
   owner 确认且已配置的 `--category`，并正确传递 `--no-assets`；未知分类在同步器初始化前
   fail-closed。同步与提交验证新增 latest bundle 防陈旧 root 字段测试；父仓库为
   363/363 单测与生产构建通过。
-- 生产只读复核（2026-08-19）：`/api/v1/plugins?platform=desktop&limit=1` 仍为
-  `200 application/json`、含 ETag、`count=0`；npm registry 中 `@webcasa/web`
-  仍为 404。因而没有实际生产条目，也没有把结构 probe 误报为生产安装 E2E。
+- 生产只读复核（2026-08-20）：`/api/v1/plugins?platform=desktop&limit=1` 为
+  `200 application/json`、含 ETag、`count=1`；`@webcasa/web@0.1.0` 的 registry version、SHA-512
+  integrity 与 tarball 已由 strict preflight 复核。生产 API 的结构契约 probe 已通过，但未把它或
+  self-refusal 测试误报为独立插件的正向 DSH/Desktop 安装 E2E。
 
 ## 未完成事项
-1. 已确认公开 `@webcasa/web@0.1.0`、`latest`、`dev-assistant`、MIT、direct interactive/2FA
-   bootstrap 与 `web-casa/DeepSeek-Harness-Marketplace-Cordis`。由于 npm 明确拒绝不存在的
-   `@cordis-mp` scope，owner 已将公开候选迁移至其现有 user scope `@webcasa`；先前 OIDC workflow 已
-   提交并 push 到 `main`，仍需提交并 push 该迁移、执行首个 npm 发布。包存在后，保护 GitHub `npm`
-   environment、配置/复核 `npm trust`，并确认 maintainer 列表后才能让后续版本从 GitHub Actions 发布。
-   父仓库的 Apache-2.0 文件没有被复制或套用。
-2. 发布后，先运行父仓库的只读预检
-   `pnpm plugins:sync -- --pkg=@webcasa/web --dry-run --no-assets`；仅在它报告 strict
-   artifact ready 后，使用 owner 确认的分类运行
-   `pnpm plugins:sync -- --pkg=@webcasa/web --category=<owner-approved-cordis-category> --no-assets`。
-   然后确认生产 `count>0`、运行目标 API probe 和真实生产 API DSH E2E。不得从包名、README
-   或 `bundle.patch` 反推 version/sha512/tarball。
-3. 以已审核公开 slug 运行 Desktop 的 `CORDIS_MARKET_PROBE_SLUG=<slug> pnpm verify:cordis-market`；
-   再执行用户确认的 Desktop 安装→pending→显式 Activate→重启 E2E。若需 Microsoft Store
+1. `@webcasa/web@0.1.0` 的 direct bootstrap、strict preflight、`dev-assistant` 同步、生产 `count=1`
+   与 API 契约 probe 均已完成；它没有 OIDC provenance。`0.1.1` 是包含宿主自安装/entry-id 冲突保护的
+   未发布补丁候选。先完成其完整本地门禁、提交与 push；随后由 owner 指定 GitHub `npm` environment 的
+   人类审批者，配置/复核 `npm trust github`，再从受保护 workflow 发布。父仓库的 Apache-2.0 文件没有被复制或套用。
+2. `0.1.1` 发布后必须重跑父仓库只读预检
+   `pnpm plugins:sync -- --pkg=@webcasa/web --dry-run --no-assets`，并只在 exact latest artifact ready 后
+   以已确认的 `dev-assistant` 分类同步。不得从包名、README 或 `bundle.patch` 反推 version/sha512/tarball。
+3. 取得独立、严格合规的公开插件条目后，运行真实生产 DSH 的 install → pending → explicit activate →
+   restart E2E；市场宿主自身必须继续拒绝，不能用自安装伪造正向验收。以已审核公开 slug 运行 Desktop 的
+   `CORDIS_MARKET_PROBE_SLUG=<slug> pnpm verify:cordis-market`，再执行用户确认的 Desktop 安装→pending→
+   显式 Activate→重启 E2E。若需 Microsoft Store
    发布，还要走独立审查后更新 `store-curated-plugins.json`，不得提前放宽 allowlist。
 4. 触发并记录 `windows-best-effort` 的首个 GitHub Actions green run；Windows 保持 BEST_EFFORT。
 5. 8/24 后 codex 对 fc668e4..HEAD 补独立评审。
 
 ## 关键命令
-- 全部测试：`pnpm -r test`（当前 164 tests）
+- 全部测试：`pnpm -r test`（以当前 CI 输出为准）
 - 冒烟：`node scripts/dsh-smoke.mjs`
 - 真实 E2E：`node scripts/dsh-e2e-install.mjs`
 - 目标 API 无 mutation 验收：`CORDIS_RUN_API=https://<target>/api/v1 node scripts/cordis-run-contract-probe.mjs`
+- 生产目录宿主拒绝验收：`CORDIS_RUN_API=https://cordis.run/api/v1 CORDIS_E2E_SLUG=webcasa-web CORDIS_E2E_EXPECT_SELF_REFUSAL=1 node scripts/dsh-e2e-install.mjs`
 - 父仓库 v4 上线 runbook：`../docs/CORDIS-API-V4.md`
 - 构建：`node apps/web/scripts/build.mjs`
 - 打包 smoke tarball：`node apps/web/scripts/pack-smoke.mjs`

@@ -57,6 +57,26 @@ test('profile lock contention maps to a recoverable 409 diagnostic', async () =>
   server.close()
 })
 
+test('self-install refusal maps to a non-mutating 409 diagnostic', async () => {
+  const svc = { async install() { throw new InstallError('SELF_INSTALL_FORBIDDEN', 'the marketplace host cannot install its own package') } }
+  const server = await listen(createMutationHandler({ installService: svc }))
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/cordis-mp/install`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: 'self' }) })
+  const body = await res.json()
+  assert.equal(res.status, 409)
+  assert.equal(body.error.code, 'SELF_INSTALL_FORBIDDEN')
+  server.close()
+})
+
+test('host entry conflict maps to a non-mutating 409 diagnostic', async () => {
+  const svc = { async install() { throw new InstallError('HOST_ENTRY_CONFLICT', 'a plugin bundle cannot replace the marketplace host entry') } }
+  const server = await listen(createMutationHandler({ installService: svc }))
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/cordis-mp/install`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: 'foreign' }) })
+  const body = await res.json()
+  assert.equal(res.status, 409)
+  assert.equal(body.error.code, 'HOST_ENTRY_CONFLICT')
+  server.close()
+})
+
 test('mountMutationRoutes registers three exact routes', () => {
   const routes = []; const ws = { register(r) { routes.push(r); return () => {} } }
   mountMutationRoutes(ws, { installService: { install() {}, uninstall() {} } })

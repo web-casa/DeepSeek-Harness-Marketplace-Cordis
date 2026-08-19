@@ -1,10 +1,10 @@
 # cordis.run Market API 契约 v4（Web / Desktop 共用）
 
-> 状态（2026-08-19）：后端已部署到 `https://cordis.run`。`GET /api/v1/plugins`、
+> 状态（2026-08-20）：后端已部署到 `https://cordis.run`。`GET /api/v1/plugins`、
 > `GET /api/v1/plugins/{slug}` 已验证直接 JSON、ETag/304 与 JSON 404；preset 下载也已验证
-> 同域直出 `200 application/zip`、无 `Location`。严格目录目前 `count=0`：没有已同步的 npm
-> 工件同时具备权威 DSH engine/platform 与 registry version/SHA-512/tarball 证据。fixture 仍用于
-> 独立测试；不得把 fixture E2E 或空目录的结构 probe 表述为生产安装 E2E。
+> 同域直出 `200 application/zip`、无 `Location`。`@webcasa/web@0.1.0` 已通过 strict registry
+> preflight 并同步，生产 probe 返回 `count=1`。fixture 仍用于独立测试；不得把 fixture E2E、
+> 结构 probe 或市场宿主的 self-refusal 表述为独立插件的生产安装 E2E。
 
 ## 0. 基础约定
 - Base：`https://cordis.run/api/v1`
@@ -126,12 +126,16 @@ Desktop 的 `feat/cordis-v4-desktop` 已采用以下 wire shape；这些规则�
 - [x] 生产缺失 slug 返回 JSON `NOT_FOUND`，不是 Next.js HTML。
 - [x] 生产 preset download 返回无重定向 `200 application/zip`；Desktop
   `pnpm verify:cordis-preset` 已实际探测。
-- [ ] 发布一个 npm 工件后验证 `platform=web` / `platform=desktop` / 无 platform、q/分类/排序/
-  cursor 分页、精确 version/integrity/tarball、blocked 展示但不可安装。
+- [x] `@webcasa/web@0.1.0` 已完成 strict registry preflight 与 `dev-assistant` 同步；生产 probe
+  已验证 `platform=web` / `platform=desktop`、无 platform、ETag/304、详情与 JSON 404，且 `count=1`。
+  exact version/SHA-512/tarball 均来自 registry，不从 manifest 推断。
+- [ ] 对独立公开 slug 做生产 DSH install → pending → explicit Activate → restart E2E。市场宿主自身
+  不能作为目标：`0.1.1` 候选会以 `SELF_INSTALL_FORBIDDEN` 拒绝自身包名，并以
+  `HOST_ENTRY_CONFLICT` 拒绝包含 `cordis-mp` entry id 的外部 bundle；它尚未发布。
 - [ ] 以公开 slug 运行 `CORDIS_MARKET_PROBE_SLUG=<slug> pnpm verify:cordis-market`，再做经过
   用户确认的 Desktop install → pending → explicit Activate → restart E2E。
 
-## 6. 联调前本地替代
+## 7. 联调前本地替代
 ```bash
 cd spikes/S1
 node fixture-server.mjs   # 打印本地端口

@@ -2,14 +2,16 @@
 
 ## Current release candidate
 
-- Version: `0.1.0` (root, six core workspaces, and `@webcasa/web` are aligned).
-- Status: a locally verified standalone implementation candidate exists; no npm
-  publication, tag, or visibility change has been performed. Its owner-approved
-  GitHub remote and reviewed OIDC workflow are pushed to `main`; it is awaiting
-  the direct first-package bootstrap, then npm Trusted Publishing configuration.
+- Version: `0.1.1` (root, six core workspaces, and `@webcasa/web` are aligned).
+- Status: an unpublished, locally validated patch candidate contains the marketplace-host self-install
+  and host-entry conflict protection. `@webcasa/web@0.1.0` was already published
+  public with dist-tag `latest` by the approved direct interactive/2FA bootstrap;
+  it is immutable and has no OIDC provenance. The `0.1.1` candidate has passed its
+  full local gate, but must be pushed to `main`, then be released through the protected
+  Trusted Publishing workflow after its human approvers are configured.
 - Package policy: every source workspace remains `private: true`. The only
   intended public package is the generated, dependency-free `@webcasa/web`
-  candidate at `0.1.0`, using dist-tag `latest`.
+  candidate at `0.1.1`, using dist-tag `latest`.
 - Scope decision: the direct bootstrap reached npm's authenticated write path,
   where npm rejected the unowned `@cordis-mp` organization scope before any
   package write. The owner then selected the existing `@webcasa` user scope;
@@ -18,12 +20,12 @@
   www.Web.Casa`. `apps/web/package.json` declares `MIT` and its checked-in
   `LICENSE` is explicitly bundled into the public candidate. This is a packaging
   record, not independent legal advice.
-- Trusted Publishing is selected for future releases. The candidate pins
+- Trusted Publishing is selected for `0.1.1` and later releases. The candidate pins
   `repository.url` to `web-casa/DeepSeek-Harness-Marketplace-Cordis`, and the
   manual-only `.github/workflows/publish.yml` has the required OIDC permission
   and exact-repository check. npm requires a package to exist before its trusted
-  publisher can be configured, so `0.1.0` needs the owner-approved direct
-  interactive/2FA bootstrap. Do not claim that bootstrap has OIDC provenance.
+  publisher can be configured. The `0.1.0` bootstrap is complete, but it does not
+  have OIDC provenance; configure and verify the publisher before releasing `0.1.1`.
 
 ## Artifact boundary
 
@@ -80,7 +82,7 @@ the legal choice and validity of its license expression.
 
 ## Configure Trusted Publishing after the bootstrap
 
-Only after `@webcasa/web@0.1.0` exists on npm and the reviewed `publish.yml`
+`@webcasa/web@0.1.0` now exists on npm and the reviewed `publish.yml`
 has been pushed to the exact GitHub repository:
 
 1. Create the GitHub `npm` environment and require the intended release
@@ -96,7 +98,8 @@ has been pushed to the exact GitHub repository:
    ```
 
 3. Verify the recorded relationship with `npm trust list @webcasa/web`, then
-   manually dispatch `publish.yml` only from a reviewed `main` commit. The
+   manually dispatch `publish.yml` only from a reviewed `main` commit with
+   expected release `@webcasa/web@0.1.1`. The
    token-free validation job reruns workspace tests, pack validation, host
    smoke, DSH smoke, staged-install E2E, and public-candidate validation. The
    OIDC-only job then downloads the SHA-512-verified tarball without checkout
@@ -145,23 +148,32 @@ approved all of the following:
    is a separate migration and review.
 2. Candidate README, license file and declaration, ownership/access, npm
    maintainers, provenance, and registry policy.
-3. A release version if it is not `0.1.0`; update all aligned manifests intentionally and rerun
+3. A release version if it is not `0.1.1`; update all aligned manifests intentionally and rerun
    the full preflight.
 4. A public artifact passes the registry-only preflight and is successfully synchronized by the
    deployed cordis.run v4 API with an owner-approved Cordis category. The service
-   itself is live and direct preset download is verified, but the strict production catalog is
-   currently empty until npm provides the exact version, SHA-512 integrity and tarball for an
-   approved package. Fixture/local E2E is not evidence of a production API lifecycle release.
+   itself is live and direct preset download is verified. `0.1.0` already passed this boundary;
+   `0.1.1` must repeat it with its own exact version, SHA-512 integrity, and tarball. Fixture/local
+   E2E is not evidence of a production API lifecycle release.
 5. For Microsoft Store distributions, an independent review and allowlist snapshot update in
    the Desktop repository; production catalog visibility alone never grants Store install rights.
 
-After approval and a clean preflight, create an annotated tag such as `v0.1.0` from the
-reviewed commit. Publishing remains a separate owner-authorized action.
+After the OIDC publication has succeeded and registry preflight/sync have been revalidated, create
+an annotated tag such as `v0.1.1` from the reviewed commit. Do not create a tag for the unreviewed
+or unpublished candidate.
+
+## Published bootstrap record
+
+`@webcasa/web@0.1.0` was published public with `latest` by direct interactive/2FA
+bootstrap on 2026-08-20, then passed exact registry preflight and production
+`dev-assistant` synchronization. It has no OIDC provenance and must not be
+retagged or replaced. Its self-install behaviour is remediated by the separate,
+unpublished `0.1.1` patch candidate.
 
 ## Release-note template
 
 ```md
-## 0.1.0 — YYYY-MM-DD
+## 0.1.1 — YYYY-MM-DD
 
 ### Added
 - Contract-ready catalog client, guarded Web harness, DSH runner, inspection gate, and staged activation flow.
@@ -170,14 +182,16 @@ reviewed commit. Publishing remains a separate owner-authorized action.
 ### Safety
 - Install lifecycle remains inspect → pre-disable → install → verify → pending → explicit activate.
 - `verifyInstalled` confirms the pnpm lockfile integrity for the exact installed artifact.
+- The marketplace host refuses its own npm package before inspect or any profile mutation, and after
+  inspection refuses a foreign bundle that would pre-disable its `cordis-mp` entry id.
 
 ### Validation
 - Workspace tests, host smoke, DSH smoke, and DSH install/activate/restart E2E passed.
 
 ### Known boundary
-- Production cordis.run v4 API and direct preset download are deployed, but no strict public
-  plugin artifact has yet entered the catalog. Its npm publication, registry sync, target probe,
-  and lifecycle E2E remain externally pending.
-- Desktop v4 has a passing production structural smoke; an actual Desktop install E2E still
-  requires the reviewed public entry and explicit user activation.
+- `@webcasa/web@0.1.0` is public, strictly synchronized, and produces production API `count=1`.
+  The original target was the market host itself, so it is not valid evidence for a positive
+  production DSH lifecycle E2E. A separate strict public plugin remains required for that E2E.
+- Desktop v4 has a passing production structural smoke; an actual Desktop install E2E and the
+  `0.1.1` Trusted Publishing release remain pending.
 ```

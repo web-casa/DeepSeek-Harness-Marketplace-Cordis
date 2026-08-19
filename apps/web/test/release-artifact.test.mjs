@@ -131,7 +131,7 @@ test('public release check emits a GitHub Actions artifact output only after val
     assert.equal(result.status, 0, result.stderr)
     const ready = JSON.parse(result.stdout)
     assert.equal(ready.status, 'ready')
-    assert.equal(ready.package, '@webcasa/web@0.1.0')
+    assert.equal(ready.package, '@webcasa/web@0.1.1')
     artifactDir = dirname(ready.artifact)
     assert.equal(basename(ready.artifact), 'webcasa-web-release-candidate.tgz')
     assert.ok(artifactDir.startsWith(join(tmpdir(), 'cordis-web-pack-')))

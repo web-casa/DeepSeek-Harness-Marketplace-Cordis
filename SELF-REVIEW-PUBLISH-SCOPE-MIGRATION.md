@@ -8,7 +8,8 @@ Date: 2026-08-20
   existing npm user scope `@webcasa` for the single public candidate.
 - The direct publish attempt completed npm browser 2FA and was rejected before
   any package write with `PUT @cordis-mp/web -> 404 Scope not found`.
-- Read-only registry lookup confirms `@webcasa/web@0.1.0` is not occupied;
+- Before the bootstrap, read-only registry lookup confirmed `@webcasa/web@0.1.0`
+  was not occupied;
   `npm access list packages webcasa` confirms the authenticated account has a
   usable user namespace.
 
@@ -25,8 +26,8 @@ Date: 2026-08-20
 
 ## Validation and review result
 
-- Web release tests pass 15/15, including the new source-manifest/patch-name
-  assertion. Full workspace tests pass 164/164, including POSIX FULL journal
+- At this scope-migration review point, Web release tests passed 15/15, including
+  the new source-manifest/patch-name assertion. Full workspace tests passed 164/164, including POSIX FULL journal
   96/96.
 - Pack check, public candidate gate, host smoke, DSH smoke, fixture
   install/activate/restart E2E, `actionlint`, `git diff --check`, and the exact
@@ -36,7 +37,12 @@ Date: 2026-08-20
 - Security/correctness review found no new credentials, unguarded mutations,
   altered package-manager behavior, or change to journal durability semantics.
 
-## Remaining external gates
+## Execution update — 2026-08-20
 
-- Do not claim publication, registry synchronization, production catalog
-  visibility, or Trusted Publishing until their external verification completes.
+- `@webcasa/web@0.1.0` was published public as `latest` after the scope migration;
+  the npm response completed successfully. The direct release has no OIDC provenance.
+- Its exact registry artifact passed the parent preflight and was synchronized to
+  `dev-assistant`; the production API contract probe observed `count=1`.
+- GitHub `npm` environment approvers and `npm trust github` remain unconfigured;
+  those are required before the unpublished `0.1.1` safety patch can be released
+  through Trusted Publishing.

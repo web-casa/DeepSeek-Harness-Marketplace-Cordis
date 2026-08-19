@@ -16,6 +16,24 @@ function loadSnapshot() {
   catch { return null }
 }
 
+function loadSelfPackageName() {
+  try {
+    const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+    return typeof manifest.name === 'string' && manifest.name.trim().length > 0 ? manifest.name.trim() : null
+  } catch {
+    return null
+  }
+}
+
+function loadSelfEntryIds() {
+  try {
+    const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
+    return [...new Set([...patch.matchAll(/^\s*-\s+id:\s*([A-Za-z0-9_.-]+)\s*$/gm)].map(match => match[1]))]
+  } catch {
+    return []
+  }
+}
+
 export function createRuntime({ dir = null, baseUrl = null, dshHome = null, profile = null } = {}) {
   const resolvedDir = dir || (() => {
     if (process.env.CORDIS_MP_PROFILE_DIR) return process.env.CORDIS_MP_PROFILE_DIR
@@ -31,7 +49,7 @@ export function createRuntime({ dir = null, baseUrl = null, dshHome = null, prof
   const journal = new Journal({ journalRoot, profileRoot: resolvedDir, lock: profileLock })
   const activation = new DshActivationPort({ patchPath: join(resolvedDir, 'cordis.patch.yml') })
   const inspect = new HttpArtifactInspector({ cacheDir: join(resolvedDir, '.cordis-mp', 'artifacts') })
-  const installService = new InstallService({ catalog, journal, packageManager, activation, inspect, pendingPath: join(resolvedDir, '.cordis-mp'), lock: profileLock })
+  const installService = new InstallService({ catalog, journal, packageManager, activation, inspect, pendingPath: join(resolvedDir, '.cordis-mp'), lock: profileLock, selfPackageName: loadSelfPackageName(), selfEntryIds: loadSelfEntryIds() })
   return { dir: resolvedDir, base, catalog, journal, profileLock, packageManager, activation, inspect, installService }
 }
 

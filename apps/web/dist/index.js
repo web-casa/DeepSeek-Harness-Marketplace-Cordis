@@ -1357,7 +1357,7 @@ var InstallError = class extends Error {
 // packages/install-core/src/install-service.mjs
 var TRACKED_FILES = ["package.json", "pnpm-lock.yaml", "cordis.patch.yml", ".cordis-mp/state.json"];
 var InstallService = class {
-  constructor({ catalog, journal, packageManager, activation = null, inspect = null, pendingPath = null, lock = null }) {
+  constructor({ catalog, journal, packageManager, activation = null, inspect = null, pendingPath = null, lock = null, selfPackageName = null, selfEntryIds = [] }) {
     this.catalog = catalog;
     this.journal = journal;
     this.packageManager = packageManager;
@@ -1365,6 +1365,14 @@ var InstallService = class {
     this.inspect = inspect;
     this.pendingPath = pendingPath;
     this.lock = lock;
+    if (selfPackageName !== null && (typeof selfPackageName !== "string" || selfPackageName.trim().length === 0)) {
+      throw new TypeError("InstallService selfPackageName must be a non-empty package name or null");
+    }
+    if (!Array.isArray(selfEntryIds) || selfEntryIds.some((id) => typeof id !== "string" || id.trim().length === 0)) {
+      throw new TypeError("InstallService selfEntryIds must be an array of non-empty entry ids");
+    }
+    this.selfPackageName = selfPackageName?.trim() || null;
+    this.selfEntryIds = [...new Set(selfEntryIds.map((id) => id.trim()))];
     if (!this.lock) throw new TypeError("InstallService requires a profile FileLock");
     if (this.journal?.lock !== this.lock) throw new TypeError("InstallService and Journal must share the profile FileLock");
     this.pending = /* @__PURE__ */ new Map();
@@ -1385,6 +1393,9 @@ var InstallService = class {
     }
     const decision = this.catalog.installability(fresh, platform);
     if (!decision.installable) throw new InstallError("NOT_INSTALLABLE", decision.reason);
+    if (this.selfPackageName && fresh.source?.packageName === this.selfPackageName) {
+      throw new InstallError("SELF_INSTALL_FORBIDDEN", "the marketplace host cannot install its own package");
+    }
     const artifact = {
       packageName: fresh.source.packageName,
       version: fresh.source.version,
@@ -1393,15 +1404,18 @@ var InstallService = class {
       registry: fresh.source.registry
     };
     let stagedPath = null;
-    if (this.inspect) {
-      const inspected = await this.inspect.inspectArtifact(artifact);
-      const inspectedIds = inspected?.entryIds;
-      artifact.entryIds = Array.isArray(inspectedIds) && inspectedIds.length > 0 ? inspectedIds : Array.isArray(fresh.entryIds) ? fresh.entryIds : [];
-      stagedPath = inspected?.stagedPath || null;
-    } else {
-      artifact.entryIds = fresh.entryIds || [];
-    }
     try {
+      if (this.inspect) {
+        const inspected = await this.inspect.inspectArtifact(artifact);
+        const inspectedIds = inspected?.entryIds;
+        artifact.entryIds = Array.isArray(inspectedIds) && inspectedIds.length > 0 ? inspectedIds : Array.isArray(fresh.entryIds) ? fresh.entryIds : [];
+        stagedPath = inspected?.stagedPath || null;
+      } else {
+        artifact.entryIds = fresh.entryIds || [];
+      }
+      if (artifact.entryIds.some((id) => this.selfEntryIds.includes(id))) {
+        throw new InstallError("HOST_ENTRY_CONFLICT", "a plugin bundle cannot replace the marketplace host entry");
+      }
       return await this.#withProfileLock(async () => {
         const tx = await this.journal.begin(TRACKED_FILES);
         let disable = null;
@@ -1581,7 +1595,7 @@ function createMutationHandler({ installService, platform = "web", guard = null 
       json2(res, 404, { error: { code: "NOT_FOUND", message: "no such route" } });
     } catch (e) {
       if (e instanceof InstallError) {
-        const status = ["MUTATION_BUSY", "MUTATION_FENCED"].includes(e.code) ? 409 : 400;
+        const status = ["MUTATION_BUSY", "MUTATION_FENCED", "SELF_INSTALL_FORBIDDEN", "HOST_ENTRY_CONFLICT"].includes(e.code) ? 409 : 400;
         return json2(res, status, { error: { code: e.code, message: e.message } });
       }
       if (e.code === "BAD_JSON" || e.code === "BODY_TOO_LARGE") return json2(res, 400, { error: { code: e.code, message: e.message } });
@@ -5165,6 +5179,22 @@ function loadSnapshot() {
     return null;
   }
 }
+function loadSelfPackageName() {
+  try {
+    const manifest = JSON.parse(readFileSync8(new URL("../package.json", import.meta.url), "utf8"));
+    return typeof manifest.name === "string" && manifest.name.trim().length > 0 ? manifest.name.trim() : null;
+  } catch {
+    return null;
+  }
+}
+function loadSelfEntryIds() {
+  try {
+    const patch = readFileSync8(new URL("../cordis.patch.yml", import.meta.url), "utf8");
+    return [...new Set([...patch.matchAll(/^\s*-\s+id:\s*([A-Za-z0-9_.-]+)\s*$/gm)].map((match) => match[1]))];
+  } catch {
+    return [];
+  }
+}
 function createRuntime({ dir = null, baseUrl = null, dshHome = null, profile = null } = {}) {
   const resolvedDir = dir || (() => {
     if (process.env.CORDIS_MP_PROFILE_DIR) return process.env.CORDIS_MP_PROFILE_DIR;
@@ -5180,7 +5210,7 @@ function createRuntime({ dir = null, baseUrl = null, dshHome = null, profile = n
   const journal = new Journal({ journalRoot, profileRoot: resolvedDir, lock: profileLock });
   const activation = new DshActivationPort({ patchPath: join8(resolvedDir, "cordis.patch.yml") });
   const inspect = new HttpArtifactInspector({ cacheDir: join8(resolvedDir, ".cordis-mp", "artifacts") });
-  const installService = new InstallService({ catalog, journal, packageManager, activation, inspect, pendingPath: join8(resolvedDir, ".cordis-mp"), lock: profileLock });
+  const installService = new InstallService({ catalog, journal, packageManager, activation, inspect, pendingPath: join8(resolvedDir, ".cordis-mp"), lock: profileLock, selfPackageName: loadSelfPackageName(), selfEntryIds: loadSelfEntryIds() });
   return { dir: resolvedDir, base, catalog, journal, profileLock, packageManager, activation, inspect, installService };
 }
 function apply(ctx) {

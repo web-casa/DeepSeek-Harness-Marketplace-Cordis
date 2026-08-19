@@ -53,8 +53,10 @@
 
 ## Residual boundary
 
-`@cordis-mp/web` remains unpublished in npm, and the production strict catalog
-currently returns `count=0`.  npm publication settings, license, maintainers,
-provenance, curation category, production synchronization, target probe, real
-production DSH/Desktop E2E, Store allowlist review, and Windows hosted-CI
-evidence remain owner/operator gates and are not claimed complete here.
+Execution update (2026-08-20): `@webcasa/web@0.1.0` is public in npm, its exact
+registry artifact passed this preflight, and the approved `dev-assistant` sync
+created a production catalog entry. The target contract probe observed `count=1`.
+The direct bootstrap is not OIDC provenance. A `0.1.1` safety candidate is still
+unpublished and must repeat preflight/sync after its Trusted Publishing release.
+Real positive production DSH/Desktop E2E, Store allowlist review, and Windows
+hosted-CI evidence remain owner/operator gates and are not claimed complete here.

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       expected_release:
-        description: Type the reviewed package and version exactly (for example, @webcasa/web@0.1.0).
+        description: Type the reviewed package and version exactly (for example, @webcasa/web@0.1.1).
         required: true
-        default: '@webcasa/web@0.1.0'
+        default: '@webcasa/web@0.1.1'
         type: string
       confirm_publish:
         description: Confirm that the protected npm environment has approved this public publication.
