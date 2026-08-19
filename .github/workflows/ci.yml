@@ -37,6 +37,8 @@ jobs:
         run: pnpm -r test
       - name: Build Web plugin
         run: node apps/web/scripts/build.mjs
+      - name: Validate npm pack metadata
+        run: pnpm run pack:check
       - name: Run host smoke
         run: node scripts/host-smoke.mjs
 

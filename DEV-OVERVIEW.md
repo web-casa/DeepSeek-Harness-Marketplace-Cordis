@@ -59,11 +59,16 @@
   不把生产 API 当作可用依赖。
 - pnpm 仅显式批准 `esbuild` 的构建脚本（`allowBuilds.esbuild: true`）；这是 Web
   打包所需的已声明 devDependency，其余依赖仍不获隐式构建脚本授权。
+- 发布准备已完成：所有 workspace 的版本均为 `0.1.0`，`pnpm run pack:check` 会对每个
+  候选包执行无脚本、无落盘的 `npm pack --dry-run` 预检。所有包仍是 `private`；Web 的
+  可分发 DSH artifact 仍是经 smoke/E2E 验证的自包含 `pack-smoke` tarball，公开 npm
+  发布、tag 和取消 private 均需 owner 明确授权，详见 `RELEASE.md`。
 
 ## 未完成事项
 1. cordis.run 生产 API 按 docs/cordis-run-api-contract.md 上线。
 2. 桌面端按 `docs/desktop-dto-migration.md` 实际迁移 DTO（source / description / page）。
-3. 发布：npm pack、tag、release 文档。
+3. 公开 npm 发布授权：确定 package scope、license/provenance、workspace 依赖发布顺序和
+   release tag/version。
 4. Windows BEST_EFFORT CI 实证。
 5. 8/24 后 codex 对 fc668e4..HEAD 补独立评审。
 
@@ -74,10 +79,12 @@
 - 目标 API 无 mutation 验收：`CORDIS_RUN_API=https://<target>/api/v1 node scripts/cordis-run-contract-probe.mjs`
 - 构建：`node apps/web/scripts/build.mjs`
 - 打包 smoke tarball：`node apps/web/scripts/pack-smoke.mjs`
+- npm pack 预检：`pnpm run pack:check`
 - CI 工作流静态校验：`actionlint .github/workflows/ci.yml`
 
 ## 关键文档
 - PLAN-*.md / M2A-*.md / JOURNAL-SPEC.md / REVIEWS.md / SELF-REVIEW-*.md
 - docs/cordis-run-api-contract.md
+- RELEASE.md
 - FAILPOINT-COVERAGE.md
 - codex-review-latest.md
