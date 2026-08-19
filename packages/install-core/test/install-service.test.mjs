@@ -73,7 +73,7 @@ test('verify failure rolls back written profile files', async () => {
 test('M2b: pre-disable happens before install; activation is pending', async () => {
   const c = setup()
   const order = []
-  c.packageManager.installVerifiedArtifact = async () => { order.push('install'); return { exitCode: 0, profileFiles: { 'package.json': Buffer.from('{"new":true}') } } }
+  c.packageManager.installVerifiedArtifact = async () => { order.push('install'); writeFileSync(join(c.profile, 'package.json'), '{"new":true}'); return { exitCode: 0, profileFiles: { 'package.json': Buffer.from('{"new":true}') } } }
   const activation = {
     async prepareDisable() { order.push('prepare'); return { entryIds: ['entry-1'] } },
     async preDisable() { order.push('pre-disable') },

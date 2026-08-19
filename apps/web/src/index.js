@@ -36,13 +36,15 @@ export function createRuntime({ dir = null, baseUrl = null, dshHome = null, prof
 export function apply(ctx) {
   ctx.inject(['webServer'], (hostCtx) => {
     const webServer = hostCtx.webServer
-    const { installService, catalog } = createRuntime()
+    const { installService, catalog, journal } = createRuntime()
     const guard = new MutationGuard()
-    hostCtx.effect(() => {
+    hostCtx.effect(async () => {
+      await journal.recover()
+      await installService.recoverPending()
       const a = mountCatalogRoutes(webServer, catalog)
       const b = mountMutationRoutes(webServer, { installService, platform: 'web', guard })
       const c = mountSessionRoute(webServer, guard)
       return () => { a(); b(); c() }
-    }, 'cordis-mp: http routes')
+    }, 'cordis-mp: recover + http routes')
   })
 }

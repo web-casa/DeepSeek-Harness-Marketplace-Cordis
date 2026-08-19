@@ -27,11 +27,13 @@ test('host injects webServer and mounts catalog + mutation routes', async () => 
   apply(ctx)
   assert.deepEqual(captured.deps, ['webServer'])
   const routes = []
+  let effectDone
   const hostCtx = {
     webServer: { register(route) { routes.push(route); return () => {} } },
-    effect(fn) { fn() },
+    effect(fn) { effectDone = fn() },
   }
-  captured.fn(hostCtx)
+  await captured.fn(hostCtx)
+  await effectDone
   assert.deepEqual(routes.map(r => [r.kind, r.path]), [
     ['exact', '/cordis-mp/catalog'],
     ['exact', '/cordis-mp/health'],

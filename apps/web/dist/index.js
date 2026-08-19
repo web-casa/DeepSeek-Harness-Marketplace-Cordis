@@ -297,28 +297,41 @@ var InstallService = class {
     let stagedPath = null;
     if (this.inspect) {
       const inspected = await this.inspect.inspectArtifact(artifact);
-      artifact.entryIds = inspected?.entryIds || fresh.entryIds || [];
+      const inspectedIds = inspected?.entryIds;
+      artifact.entryIds = Array.isArray(inspectedIds) && inspectedIds.length > 0 ? inspectedIds : Array.isArray(fresh.entryIds) ? fresh.entryIds : [];
       stagedPath = inspected?.stagedPath || null;
     } else {
       artifact.entryIds = fresh.entryIds || [];
     }
-    let disable = null;
-    if (this.activation) {
-      disable = await this.activation.prepareDisable({ slug, artifact });
-      if (disable?.entryIds?.length) await this.activation.preDisable(disable.entryIds);
-    }
     const tx = await this.journal.begin(TRACKED_FILES);
+    let disable = null;
+    let disableApplied = false;
     try {
+      if (this.activation) {
+        disable = await this.activation.prepareDisable({ slug, artifact });
+        disable.ownedDisables = [];
+        if (disable?.entryIds?.length) {
+          await this.activation.preDisable(disable.entryIds);
+          disableApplied = true;
+          disable.ownedDisables = this.activation.ownedDisables || [];
+        }
+      }
       const result = await this.packageManager.installVerifiedArtifact(artifact, signal);
       if (result.exitCode !== 0) throw new InstallError("INSTALL_FAILED", result.stderr || `exit ${result.exitCode}`);
-      for (const rel of Object.keys(result.profileFiles || {})) {
-        await this.journal.adoptExternal(tx, rel);
+      for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
+        await this.journal.adoptExternal(tx, rel, bytes);
       }
       const verified = await this.packageManager.verifyInstalled(artifact);
       if (!verified) throw new InstallError("VERIFY_FAILED", "installed package does not match verified artifact");
       await this.journal.commitFiles(tx);
     } catch (e) {
       if (e.code === "FP_INJECTED") throw e;
+      if (disableApplied && disable?.entryIds?.length) {
+        try {
+          await this.activation.cancelDisable(disable.entryIds);
+        } catch {
+        }
+      }
       try {
         await this.journal.recover();
       } catch {
@@ -326,12 +339,6 @@ var InstallService = class {
       if (stagedPath) {
         try {
           this.inspect.cleanup?.(stagedPath);
-        } catch {
-        }
-      }
-      if (disable?.entryIds?.length) {
-        try {
-          await this.activation.cancelDisable(disable.entryIds);
         } catch {
         }
       }
@@ -343,7 +350,7 @@ var InstallService = class {
       } catch {
       }
     }
-    const pending = { v: 1, slug, artifact, entryIds: disable?.entryIds || [], entryRevision: fresh.entryRevision, tx, createdAt: Date.now() };
+    const pending = { v: 1, slug, artifact, entryIds: disable?.entryIds || [], ownedDisables: disable?.ownedDisables || [], entryRevision: fresh.entryRevision, tx, createdAt: Date.now() };
     this.pending.set(slug, pending);
     await this.#persistPending();
     return { status: "COMMITTED", pendingActivation: true, pending };
@@ -353,7 +360,7 @@ var InstallService = class {
     if (!pending) throw new InstallError("NO_PENDING_ACTIVATION", "no pending activation for slug: " + slug);
     if (!this.activation) throw new InstallError("NO_ACTIVATION_PORT", "activation port is not configured");
     let activationStatus = null;
-    if (pending.entryIds.length) activationStatus = await this.activation.activate(pending.entryIds, signal);
+    if (pending.entryIds.length) activationStatus = await this.activation.activate(pending.entryIds, { ownedSet: pending.ownedDisables });
     this.pending.delete(slug);
     await this.#persistPending();
     return { status: "ACTIVE", activationStatus };
@@ -396,8 +403,8 @@ var InstallService = class {
     try {
       const result = await this.packageManager.remove(packageName, signal);
       if (result.exitCode !== 0) throw new InstallError("REMOVE_FAILED", result.stderr || `exit ${result.exitCode}`);
-      for (const rel of Object.keys(result.profileFiles || {})) {
-        await this.journal.adoptExternal(tx, rel);
+      for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
+        await this.journal.adoptExternal(tx, rel, bytes);
       }
       await this.journal.commitFiles(tx);
     } catch (e) {
@@ -702,6 +709,10 @@ var ROW_ID_RE = /^[A-Za-z0-9_.-]+$/;
 var DshActivationPort = class {
   constructor({ patchPath }) {
     this.patchPath = patchPath;
+    this.owned = /* @__PURE__ */ new Set();
+  }
+  get ownedDisables() {
+    return [...this.owned];
   }
   #text() {
     try {
@@ -778,19 +789,23 @@ var DshActivationPort = class {
         if (/^ {2}disabled: false\s*$/.test(lines[i + 1] ?? "")) {
           lines[i + 1] = "  disabled: true";
           changed++;
+          this.owned.add(id);
         }
         break;
       }
       if (!found) {
         lines.push(`- id: ${id}`, "  disabled: true");
         changed++;
+        this.owned.add(id);
       }
     }
     if (changed > 0) this.#save(lines.join("\n"));
     return changed;
   }
-  activate(entryIds) {
-    const ids = new Set(entryIds.filter((id) => ROW_ID_RE.test(id)));
+  activate(entryIds, { ownedOnly = false, ownedSet = null } = {}) {
+    let ids = new Set(entryIds.filter((id) => ROW_ID_RE.test(id)));
+    if (ownedOnly) ids = new Set([...ids].filter((id) => this.owned.has(id)));
+    if (Array.isArray(ownedSet)) ids = new Set([...ids].filter((id) => ownedSet.includes(id)));
     if (ids.size === 0) return 0;
     const lines = this.#text().split("\n");
     const out = [];
@@ -800,13 +815,18 @@ var DshActivationPort = class {
       if (m2 && ids.has(m2[1]) && /^ {2}disabled: true\s*$/.test(lines[i + 1] ?? "")) {
         i++;
         removed++;
+        this.owned.delete(m2[1]);
         continue;
       }
       out.push(lines[i]);
     }
     if (removed > 0) {
       const hasRows = out.some((l) => /^\s*- /.test(l));
-      if (!hasRows) out[0] = "[]";
+      if (!hasRows) {
+        let idx = 0;
+        while (idx < out.length && (out[idx].trim() === "" || out[idx].trim().startsWith("#"))) idx++;
+        out.splice(idx, 0, "[]");
+      }
       this.#save(out.join("\n"));
     }
     return removed;
@@ -815,7 +835,7 @@ var DshActivationPort = class {
     return { entryIds: artifact?.entryIds || [] };
   }
   async cancelDisable(entryIds) {
-    return this.activate(entryIds);
+    return this.activate(entryIds, { ownedOnly: true });
   }
 };
 
@@ -1365,11 +1385,15 @@ var Journal = class {
     this.lock?.fence();
     atomicFile(join6(this.#txDir(tx), "OUTCOME.json"), JSON.stringify({ v: 1, txid: tx, outcome: "COMMITTED" }), { mode: 384 });
   }
-  async adoptExternal(tx, rel) {
+  async adoptExternal(tx, rel, expectedBytes = null) {
     this.lock?.fence();
     this.#assertRel(rel);
     const baseline = this.#loadManifest(tx).targets[rel].state;
     const current = fileState(this.#profilePath(rel));
+    if (expectedBytes != null) {
+      const expectedHash = sha256(expectedBytes);
+      if (current.hash !== expectedHash) throw new JournalError("CONFLICT", "external change does not match expected bytes: " + rel);
+    }
     if (current.exists === baseline.exists && current.hash === baseline.hash) return false;
     const mode = current.exists ? modeOf(this.#profilePath(rel)) || "0644" : void 0;
     const length = current.exists ? readFileSync7(this.#profilePath(rel)).length : void 0;
@@ -4769,6 +4793,10 @@ var HttpArtifactInspector = class {
     if (res.body && typeof res.body.getReader === "function") {
       const reader = res.body.getReader();
       const out = createWriteStream(stagedPath, { mode: 384 });
+      let streamError = null;
+      out.on("error", (e) => {
+        streamError = e;
+      });
       try {
         for (; ; ) {
           const { done, value } = await reader.read();
@@ -4778,6 +4806,17 @@ var HttpArtifactInspector = class {
           hash.update(value);
           if (!out.write(value)) await new Promise((r) => out.once("drain", r));
         }
+      } catch (e) {
+        try {
+          reader.cancel?.();
+        } catch {
+        }
+        out.destroy();
+        try {
+          rmSync3(stagedPath, { force: true });
+        } catch {
+        }
+        throw e;
       } finally {
         reader.releaseLock?.();
       }
@@ -4786,6 +4825,7 @@ var HttpArtifactInspector = class {
         out.once("finish", resolve);
         out.once("error", reject);
       });
+      if (streamError) throw streamError;
     } else {
       const buf = Buffer.from(await res.arrayBuffer());
       bytes = buf.length;
@@ -4841,9 +4881,11 @@ function createRuntime({ dir = null, baseUrl = null, dshHome = null, profile = n
 function apply(ctx) {
   ctx.inject(["webServer"], (hostCtx) => {
     const webServer = hostCtx.webServer;
-    const { installService, catalog } = createRuntime();
+    const { installService, catalog, journal } = createRuntime();
     const guard = new MutationGuard();
-    hostCtx.effect(() => {
+    hostCtx.effect(async () => {
+      await journal.recover();
+      await installService.recoverPending();
       const a = mountCatalogRoutes(webServer, catalog);
       const b2 = mountMutationRoutes(webServer, { installService, platform: "web", guard });
       const c = mountSessionRoute(webServer, guard);
@@ -4852,7 +4894,7 @@ function apply(ctx) {
         b2();
         c();
       };
-    }, "cordis-mp: http routes");
+    }, "cordis-mp: recover + http routes");
   });
 }
 export {

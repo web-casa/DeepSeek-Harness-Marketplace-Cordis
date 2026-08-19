@@ -9,7 +9,8 @@ const buildScript = fileURLToPath(new URL('../apps/web/scripts/build.mjs', impor
 const packScript = fileURLToPath(new URL('../apps/web/scripts/pack-smoke.mjs', import.meta.url))
 const fixture = fileURLToPath(new URL('../spikes/S1/fixture-server.mjs', import.meta.url))
 
-spawnSync(process.execPath, [buildScript], { stdio: 'inherit' })
+const build = spawnSync(process.execPath, [buildScript], { stdio: 'inherit' })
+if (build.status !== 0) { console.error('build failed'); process.exit(1) }
 const pack = spawnSync(process.execPath, [packScript], { encoding: 'utf8' })
 if (pack.status !== 0) { console.error(pack.stderr); process.exit(1) }
 const tgz = pack.stdout.trim().split('\n').pop()
@@ -51,7 +52,7 @@ console.log('patch after install:\n' + patchAfterInstall)
 if (!/- id: dsh-market\s*\n {2}disabled: true/.test(patchAfterInstall)) { console.error('pre-disable row missing'); process.exit(1) }
 
 const dump1 = spawnSync('dsh', ['--profile', 'web', '--dump-config'], { env, encoding: 'utf8', timeout: 60_000 })
-if (!/dsh-market[\s\S]{0,80}disabled: true/.test(dump1.stdout)) { console.error('dump-config did not show disabled dsh-market\n' + dump1.stdout.slice(0, 2000)); process.exit(1) }
+if (dump1.status !== 0 || !/dsh-market[\s\S]{0,80}disabled: true/.test(dump1.stdout)) { console.error('dump-config did not show disabled dsh-market status=' + dump1.status + '\n' + dump1.stdout.slice(0, 2000)); process.exit(1) }
 
 const activate = await req('/cordis-mp/activate', { method: 'POST', headers: auth, body: JSON.stringify({ slug: 'dsh-market' }) })
 console.log('activate response', activate.status, activate.body)
@@ -62,7 +63,7 @@ console.log('patch after activate:\n' + patchAfterActivate)
 if (/- id: dsh-market\s*\n {2}disabled: true/.test(patchAfterActivate)) { console.error('disable row still present after activate'); process.exit(1) }
 
 const dump2 = spawnSync('dsh', ['--profile', 'web', '--dump-config'], { env, encoding: 'utf8', timeout: 60_000 })
-if (/dsh-market[\s\S]{0,80}disabled: true/.test(dump2.stdout)) { console.error('dump-config still disabled after activate'); process.exit(1) }
+if (dump2.status !== 0 || /dsh-market[\s\S]{0,80}disabled: true/.test(dump2.stdout)) { console.error('dump-config still disabled after activate status=' + dump2.status); process.exit(1) }
 // 重启 DSH，验证 activate 后的 dsh-market 真实加载（其宿主路由 /dsh-market/registry 可达）
 web.kill()
 await new Promise(r => setTimeout(r, 500))
@@ -76,3 +77,4 @@ console.log('dsh-market after restart', market.status)
 if (market.status !== 200) process.exit(1)
 console.log('E2E INSTALL+ACTIVATE+RESTART PASS')
 web2.kill(); fixtureChild.kill()
+process.exit(0)

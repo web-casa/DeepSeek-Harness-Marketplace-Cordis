@@ -108,11 +108,15 @@ export class Journal {
   }
 
 
-  async adoptExternal(tx, rel) {
+  async adoptExternal(tx, rel, expectedBytes = null) {
     this.lock?.fence()
     this.#assertRel(rel)
     const baseline = this.#loadManifest(tx).targets[rel].state
     const current = fileState(this.#profilePath(rel))
+    if (expectedBytes != null) {
+      const expectedHash = sha256(expectedBytes)
+      if (current.hash !== expectedHash) throw new JournalError('CONFLICT', 'external change does not match expected bytes: ' + rel)
+    }
     if (current.exists === baseline.exists && current.hash === baseline.hash) return false
     const mode = current.exists ? (modeOf(this.#profilePath(rel)) || '0644') : undefined
     const length = current.exists ? readFileSync(this.#profilePath(rel)).length : undefined

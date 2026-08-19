@@ -24,6 +24,8 @@ export class HttpArtifactInspector {
     if (res.body && typeof res.body.getReader === 'function') {
       const reader = res.body.getReader()
       const out = createWriteStream(stagedPath, { mode: 0o600 })
+      let streamError = null
+      out.on('error', e => { streamError = e })
       try {
         for (;;) {
           const { done, value } = await reader.read()
@@ -33,9 +35,15 @@ export class HttpArtifactInspector {
           hash.update(value)
           if (!out.write(value)) await new Promise(r => out.once('drain', r))
         }
+      } catch (e) {
+        try { reader.cancel?.() } catch {}
+        out.destroy()
+        try { rmSync(stagedPath, { force: true }) } catch {}
+        throw e
       } finally { reader.releaseLock?.() }
       out.end()
       await new Promise((resolve, reject) => { out.once('finish', resolve); out.once('error', reject) })
+      if (streamError) throw streamError
     } else {
       const buf = Buffer.from(await res.arrayBuffer())
       bytes = buf.length

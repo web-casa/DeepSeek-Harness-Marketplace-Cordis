@@ -7,7 +7,8 @@ import { randomBytes } from 'node:crypto'
 const ROW_ID_RE = /^[A-Za-z0-9_.-]+$/
 
 export class DshActivationPort {
-  constructor({ patchPath }) { this.patchPath = patchPath }
+  constructor({ patchPath }) { this.patchPath = patchPath; this.owned = new Set() }
+  get ownedDisables() { return [...this.owned] }
   #text() { try { return readFileSync(this.patchPath, 'utf8') } catch { return '[]\n' } }
   #save(text) {
     const dir = dirname(this.patchPath)
@@ -55,32 +56,38 @@ export class DshActivationPort {
         if (!m || m[1] !== id) continue
         found = true
         if (/^ {2}disabled: true\s*$/.test(lines[i + 1] ?? '')) break
-        if (/^ {2}disabled: false\s*$/.test(lines[i + 1] ?? '')) { lines[i + 1] = '  disabled: true'; changed++ }
+        if (/^ {2}disabled: false\s*$/.test(lines[i + 1] ?? '')) { lines[i + 1] = '  disabled: true'; changed++; this.owned.add(id) }
         break
       }
-      if (!found) { lines.push(`- id: ${id}`, '  disabled: true'); changed++ }
+      if (!found) { lines.push(`- id: ${id}`, '  disabled: true'); changed++; this.owned.add(id) }
     }
     if (changed > 0) this.#save(lines.join('\n'))
     return changed
   }
-  activate(entryIds) {
-    const ids = new Set(entryIds.filter(id => ROW_ID_RE.test(id)))
+  activate(entryIds, { ownedOnly = false, ownedSet = null } = {}) {
+    let ids = new Set(entryIds.filter(id => ROW_ID_RE.test(id)))
+    if (ownedOnly) ids = new Set([...ids].filter(id => this.owned.has(id)))
+    if (Array.isArray(ownedSet)) ids = new Set([...ids].filter(id => ownedSet.includes(id)))
     if (ids.size === 0) return 0
     const lines = this.#text().split('\n')
     const out = []
     let removed = 0
     for (let i = 0; i < lines.length; i++) {
       const m = /^- id: ([A-Za-z0-9_.-]+)\s*$/.exec(lines[i])
-      if (m && ids.has(m[1]) && /^ {2}disabled: true\s*$/.test(lines[i + 1] ?? '')) { i++; removed++; continue }
+      if (m && ids.has(m[1]) && /^ {2}disabled: true\s*$/.test(lines[i + 1] ?? '')) { i++; removed++; this.owned.delete(m[1]); continue }
       out.push(lines[i])
     }
     if (removed > 0) {
       const hasRows = out.some(l => /^\s*- /.test(l))
-      if (!hasRows) out[0] = '[]'
+      if (!hasRows) {
+        let idx = 0
+        while (idx < out.length && (out[idx].trim() === '' || out[idx].trim().startsWith('#'))) idx++
+        out.splice(idx, 0, '[]')
+      }
       this.#save(out.join('\n'))
     }
     return removed
   }
   async prepareDisable({ artifact }) { return { entryIds: artifact?.entryIds || [] } }
-  async cancelDisable(entryIds) { return this.activate(entryIds) }
+  async cancelDisable(entryIds) { return this.activate(entryIds, { ownedOnly: true }) }
 }

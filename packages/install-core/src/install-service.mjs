@@ -37,36 +37,42 @@ export class InstallService {
     let stagedPath = null
     if (this.inspect) {
       const inspected = await this.inspect.inspectArtifact(artifact)
-      artifact.entryIds = inspected?.entryIds || fresh.entryIds || []
+      const inspectedIds = inspected?.entryIds
+      artifact.entryIds = Array.isArray(inspectedIds) && inspectedIds.length > 0 ? inspectedIds : (Array.isArray(fresh.entryIds) ? fresh.entryIds : [])
       stagedPath = inspected?.stagedPath || null
     } else {
       artifact.entryIds = fresh.entryIds || []
     }
-    // M2b：PRE_DISABLE 在安装前执行；失败时撤销。
-    let disable = null
-    if (this.activation) {
-      disable = await this.activation.prepareDisable({ slug, artifact })
-      if (disable?.entryIds?.length) await this.activation.preDisable(disable.entryIds)
-    }
     const tx = await this.journal.begin(TRACKED_FILES)
+    let disable = null
+    let disableApplied = false
     try {
+      if (this.activation) {
+        disable = await this.activation.prepareDisable({ slug, artifact })
+        disable.ownedDisables = []
+        if (disable?.entryIds?.length) {
+          await this.activation.preDisable(disable.entryIds)
+          disableApplied = true
+          disable.ownedDisables = this.activation.ownedDisables || []
+        }
+      }
       const result = await this.packageManager.installVerifiedArtifact(artifact, signal)
       if (result.exitCode !== 0) throw new InstallError('INSTALL_FAILED', result.stderr || `exit ${result.exitCode}`)
-      for (const rel of Object.keys(result.profileFiles || {})) {
-        await this.journal.adoptExternal(tx, rel)
+      for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
+        await this.journal.adoptExternal(tx, rel, bytes)
       }
       const verified = await this.packageManager.verifyInstalled(artifact)
       if (!verified) throw new InstallError('VERIFY_FAILED', 'installed package does not match verified artifact')
       await this.journal.commitFiles(tx)
     } catch (e) {
       if (e.code === 'FP_INJECTED') throw e
+      if (disableApplied && disable?.entryIds?.length) { try { await this.activation.cancelDisable(disable.entryIds) } catch {} }
       try { await this.journal.recover() } catch {}
       if (stagedPath) { try { this.inspect.cleanup?.(stagedPath) } catch {} }
-      if (disable?.entryIds?.length) { try { await this.activation.cancelDisable(disable.entryIds) } catch {} }
       throw e
     }
     if (stagedPath) { try { this.inspect.cleanup?.(stagedPath) } catch {} }
-    const pending = { v: 1, slug, artifact, entryIds: disable?.entryIds || [], entryRevision: fresh.entryRevision, tx, createdAt: Date.now() }
+    const pending = { v: 1, slug, artifact, entryIds: disable?.entryIds || [], ownedDisables: disable?.ownedDisables || [], entryRevision: fresh.entryRevision, tx, createdAt: Date.now() }
     this.pending.set(slug, pending)
     await this.#persistPending()
     return { status: 'COMMITTED', pendingActivation: true, pending }
@@ -77,7 +83,7 @@ export class InstallService {
     if (!pending) throw new InstallError('NO_PENDING_ACTIVATION', 'no pending activation for slug: ' + slug)
     if (!this.activation) throw new InstallError('NO_ACTIVATION_PORT', 'activation port is not configured')
     let activationStatus = null
-    if (pending.entryIds.length) activationStatus = await this.activation.activate(pending.entryIds, signal)
+    if (pending.entryIds.length) activationStatus = await this.activation.activate(pending.entryIds, { ownedSet: pending.ownedDisables })
     this.pending.delete(slug)
     await this.#persistPending()
     return { status: 'ACTIVE', activationStatus }
@@ -107,8 +113,8 @@ export class InstallService {
     try {
       const result = await this.packageManager.remove(packageName, signal)
       if (result.exitCode !== 0) throw new InstallError('REMOVE_FAILED', result.stderr || `exit ${result.exitCode}`)
-      for (const rel of Object.keys(result.profileFiles || {})) {
-        await this.journal.adoptExternal(tx, rel)
+      for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
+        await this.journal.adoptExternal(tx, rel, bytes)
       }
       await this.journal.commitFiles(tx)
     } catch (e) {
