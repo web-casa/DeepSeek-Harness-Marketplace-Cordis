@@ -2,16 +2,23 @@
 
 ## Current verified status
 
-On 2026-08-19, direct reads of production list and detail endpoints returned
-Next.js `404 text/html`, not the v4 JSON contract. The cordis.run backend is not
-part of this repository, so this checkout cannot deploy that missing service and
-must not claim a production API or production-API E2E pass.
+On 2026-08-19, the production list and detail endpoints returned Next.js
+`404 text/html`, not the v4 JSON contract. The earlier inventory was incomplete:
+the cordis.run backend is the parent repository
+`/home/ivmm/daohang/toolso-ai-open`, not the nested `cordis-mp` workspace.
 
-## Backend owner deliverables
+The parent now contains the strict v4 routes, registry-artifact persistence and
+sync, direct verified preset download, route/unit tests, a successful production
+build, and a local real-Next/temporary-PostgreSQL contract probe. No production
+deployment was performed in this checkout, so this is **not** a production API
+or production-API E2E pass.
+
+## Remaining rollout operator work
 
 Deploy the routes in
 [`cordis-run-api-contract.md`](./cordis-run-api-contract.md) without a Next.js
-HTML fallback:
+HTML fallback. The detailed parent-repository procedure is
+[`../docs/CORDIS-API-V4.md`](../../docs/CORDIS-API-V4.md):
 
 - `GET /api/v1/plugins` supports q/category/platform/sort/order/cursor/limit,
   plus temporary `page/per_page` compatibility; returns JSON `count + page`.
@@ -21,6 +28,11 @@ HTML fallback:
 - npm sources publish exact version/integrity/registry/tarball values, with the
   tarball host equal to the approved registry host.
 - preset download is direct `200 application/zip` from `cordis.run`, not a 302.
+
+The operator must apply the nullable `plugin_meta.registry_artifact` column before
+deploying the route, backfill it through the existing controlled npm syncer, then
+run the probe below. Incomplete registry/GitHub-only records are intentionally
+omitted rather than guessed into installable API rows.
 
 ## Non-mutating deployment gate
 

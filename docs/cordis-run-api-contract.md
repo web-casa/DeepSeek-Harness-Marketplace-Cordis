@@ -1,9 +1,11 @@
 # cordis.run Market API 契约 v4（Web / Desktop 共用）
 
-> 状态：待 cordis.run 后端实现。
-> 当前生产状态：`GET /api/v1/plugins` 返回 Next.js 404；插件数据嵌在页面 RSC
-> HTML 中，没有公开 JSON API。未实现前，两端开发请使用本地 fixture：
-> `spikes/S1/fixture-server.mjs`，并通过 `CORDIS_RUN_API` 覆盖 base URL。
+> 状态：后端实现在父仓库 `/home/ivmm/daohang/toolso-ai-open`，但尚未部署到生产。
+> 已实现 `GET /api/v1/plugins`、`GET /api/v1/plugins/{slug}` 和同域 preset 直出；严格
+> registry 工件快照、ETag/304、cursor、JSON 404 均有本机真实 Next + 临时 PostgreSQL 验证。
+> 基线时生产端点仍返回 Next.js 404 HTML；在实际部署、快照回填和目标探针通过前，两端继续使用
+> 本地 fixture `spikes/S1/fixture-server.mjs`，并通过 `CORDIS_RUN_API` 覆盖 base URL。不得把
+> 本机验证或 fixture E2E 表述为生产 API E2E。
 
 ## 0. 基础约定
 - Base：`https://cordis.run/api/v1`

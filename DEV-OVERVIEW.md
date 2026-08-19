@@ -27,6 +27,8 @@
 6. M2b 安装门禁：inspect → pre-disable → install → verify → pending →
    activate，真实 E2E install/activate/restart 通过。
 7. codex review（mulerun）发现的阻断项已修复。
+8. 父仓库 cordis.run 后端补齐 v4 API：严格 registry 工件快照、列表/详情 ETag +
+   cursor + JSON error、以及校验后同域 preset ZIP 直出；生产部署仍待授权操作员执行。
 
 ## 关键决策
 - 在线安装只支持 npm source；GitHub-only 只浏览/侧载。
@@ -43,13 +45,20 @@
 - `verifyInstalled` 已复核 `node_modules` manifest 的 name/version，及
   `pnpm-lock.yaml` 中该精确 artifact 的 `resolution.integrity`；任何缺失、
   不匹配、非普通文件或超限 lockfile 均 fail-closed 并触发既有回滚路径。
-- 生产 cordis.run API 尚未上线（2026-08-19 直接探测 list/detail 均为 Next.js
-  404 HTML；本地 fixture 可用），因此不得把 fixture E2E 说成生产 API E2E。
+- 父仓库 `/home/ivmm/daohang/toolso-ai-open` 已实现 cordis.run v4 后端：只有完整、精确
+  npm registry 工件快照才会进入安装目录；列表/详情支持 ETag/304、cursor、JSON 404，
+  `quarantined` 条目以 `blocked:true` 保留 kill switch；preset 下载在 SHA-256/大小复核后
+  同域 `200 application/zip` 直出，不再 302。父仓库 349/349 单测、生产构建和临时
+  PostgreSQL 的真实 Next 契约探针均已通过。
+- 生产 cordis.run API **尚未由本工作流部署**：基线时 list/detail 为 Next.js 404 HTML，
+  尚未执行生产 schema 变更、快照回填或生产域探针。因此 fixture E2E 和本机 API 探针都不是
+  生产 API E2E。
 - fixture 已对齐 cursor + `count/page`、`page/per_page` 兼容、ETag/304、JSON
   error、canonical screenshot；`scripts/cordis-run-contract-probe.mjs` 可在
   部署后做无 mutation 的目标验收，DSH E2E 也可显式通过 `CORDIS_RUN_API` 切换。
-- 桌面端源码不在本仓库，故尚未实际迁移；迁移 DTO/错误/分页/安全门禁指南见
-  `docs/desktop-dto-migration.md`。
+- Desktop 团队已报告 `feat/cordis-v4-desktop` 完成嵌套 DTO、`platform=desktop`、cursor、
+  ETag/304、JSON 404、严格 pending/explicit activate 与 preset 200 直出适配（该源码不在
+  本仓库，未在本 checkout 独立复验）。迁移背景与契约仍见 `docs/desktop-dto-migration.md`。
 - Web 市场已提供详情弹窗、仅渲染 `https://cdn.cordis.run` 截图、cursor 历史分页、
   Web/Desktop 平台徽章及可展开的错误诊断（code/HTTP/request ID/retry）。安装和启用
   仍只经既有 guard-backed controller/API；页面不新增 mutation 通道。
@@ -65,8 +74,10 @@
   发布、tag 和取消 private 均需 owner 明确授权，详见 `RELEASE.md`。
 
 ## 未完成事项
-1. cordis.run 生产 API 按 docs/cordis-run-api-contract.md 上线。
-2. 桌面端按 `docs/desktop-dto-migration.md` 实际迁移 DTO（source / description / page）。
+1. 由已授权操作员按父仓库 `docs/CORDIS-API-V4.md` 执行生产 schema、快照回填、部署、目标
+   契约探针和专用 E2E 插件验证。
+2. Desktop 分支提交/推送后，与已部署测试目标做一次端到端兼容性 smoke（不重复开发其已报告的
+   DTO/门禁实现）。
 3. 公开 npm 发布授权：确定 package scope、license/provenance、workspace 依赖发布顺序和
    release tag/version。
 4. Windows BEST_EFFORT CI 实证。
@@ -77,6 +88,7 @@
 - 冒烟：`node scripts/dsh-smoke.mjs`
 - 真实 E2E：`node scripts/dsh-e2e-install.mjs`
 - 目标 API 无 mutation 验收：`CORDIS_RUN_API=https://<target>/api/v1 node scripts/cordis-run-contract-probe.mjs`
+- 父仓库 v4 上线 runbook：`../docs/CORDIS-API-V4.md`
 - 构建：`node apps/web/scripts/build.mjs`
 - 打包 smoke tarball：`node apps/web/scripts/pack-smoke.mjs`
 - npm pack 预检：`pnpm run pack:check`

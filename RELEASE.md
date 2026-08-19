@@ -49,8 +49,10 @@ approved all of the following:
 2. Per-package README, license, ownership/access, npm provenance, and registry policy.
 3. A release version if it is not `0.1.0`; update all aligned manifests intentionally and rerun
    the full preflight.
-4. The cordis.run production API rollout gate. The API was still returning 404 HTML on
-   2026-08-19, so fixture E2E is not evidence of a production API release.
+4. The cordis.run production API rollout gate in the parent repository's
+   `docs/CORDIS-API-V4.md`. The code is implemented but not deployed; fixture/local E2E is
+   not evidence of a production API release. A dedicated approved E2E plugin is required
+   for the target-network lifecycle check.
 
 After approval and a clean preflight, create an annotated tag such as `v0.1.0` from the
 reviewed commit. Publishing remains a separate owner-authorized action.
@@ -72,5 +74,7 @@ reviewed commit. Publishing remains a separate owner-authorized action.
 - Workspace tests, host smoke, DSH smoke, and DSH install/activate/restart E2E passed.
 
 ### Known boundary
-- Production cordis.run API rollout and the Desktop source migration are externally pending.
+- Production cordis.run API deployment, snapshot backfill, target probe, and dedicated
+  E2E-plugin validation remain externally pending. Desktop v4 migration is reported complete
+  on `feat/cordis-v4-desktop`, but is outside this checkout and needs target smoke after push.
 ```

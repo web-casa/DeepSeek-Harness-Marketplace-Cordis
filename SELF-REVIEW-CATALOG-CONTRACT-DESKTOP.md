@@ -40,6 +40,9 @@ claim because this repository contains no Desktop source tree.
 
 ## Residual boundary
 
-The production host still returns 404 HTML. Backend deployment, a stable public
-E2E test plugin, and the actual Desktop code migration remain external work;
-the new probe and opt-in E2E commands are the acceptance gates for those owners.
+At the time of this review the production host returned 404 HTML. The parent
+repository now contains the backend implementation, but deployment, a stable
+public E2E test plugin, and target-network validation remain operator work; see
+`docs/cordis-run-api-rollout.md`. Desktop v4 migration is now reported complete
+on `feat/cordis-v4-desktop`, but remains outside this checkout and has not been
+independently retested here.
