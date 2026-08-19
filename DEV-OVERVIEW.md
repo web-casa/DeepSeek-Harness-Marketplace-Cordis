@@ -44,7 +44,7 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
-- 159 tests / 159 pass。
+- 161 tests / 161 pass。
 - 真实 DSH E2E PASS：install → patch disable → activate → restart → dsh-market
   路由 200。
 - `verifyInstalled` 已复核 `node_modules` manifest 的 name/version，及
@@ -64,9 +64,11 @@
 - fixture 已对齐 cursor + `count/page`、`page/per_page` 兼容、ETag/304、JSON
   error、canonical screenshot；`scripts/cordis-run-contract-probe.mjs` 可在
   部署后做无 mutation 的目标验收，DSH E2E 也可显式通过 `CORDIS_RUN_API` 切换。
-- Desktop 团队已报告 `feat/cordis-v4-desktop` 完成嵌套 DTO、`platform=desktop`、cursor、
-  ETag/304、JSON 404、严格 pending/explicit activate 与 preset 200 直出适配（该源码不在
-  本仓库，未在本 checkout 独立复验）。迁移背景与契约仍见 `docs/desktop-dto-migration.md`。
+- Desktop 的 `feat/cordis-v4-desktop` 已在独立源码树复验：嵌套 DTO、`platform=desktop`、cursor、
+  ETag/304、JSON 404、严格 pending/explicit activate 与 preset 200 直出适配仍在。新增
+  `pnpm verify:cordis-market` 只读生产 smoke，实际通过直接 JSON、ETag/304、JSON 404；
+  `pnpm verify:cordis-preset` 也通过同域 `200 application/zip`。当前 `count=0`，因此没有把
+  这次结构联调表述为 Desktop 安装 E2E；Microsoft Store allowlist 也保持不变。
 - Web 市场已提供详情弹窗、仅渲染 `https://cdn.cordis.run` 截图、cursor 历史分页、
   Web/Desktop 平台徽章及可展开的错误诊断（code/HTTP/request ID/retry）。安装和启用
   仍只经既有 guard-backed controller/API；页面不新增 mutation 通道。
@@ -84,24 +86,29 @@
   BEST_EFFORT 分级。
 - pnpm 仅显式批准 `esbuild` 的构建脚本（`allowBuilds.esbuild: true`）；这是 Web
   打包所需的已声明 devDependency，其余依赖仍不获隐式构建脚本授权。
-- 发布准备已完成：所有 workspace 的版本均为 `0.1.0`，`pnpm run pack:check` 会对每个
-  候选包执行无脚本、无落盘的 `npm pack --dry-run` 预检。所有包仍是 `private`；Web 的
-  可分发 DSH artifact 仍是经 smoke/E2E 验证的自包含 `pack-smoke` tarball，公开 npm
-  发布、tag 和取消 private 均需 owner 明确授权，详见 `RELEASE.md`。
+- 发布候选已补齐：`@cordis-mp/web` 的私有源码 manifest 明确声明
+  `dsh.platforms: [web, desktop]` 与 `dsh.engines.dsh: >=0.1.0-rc.7 <0.2.0`；
+  `pack-smoke` 生成无 workspace 依赖、可公开打包的独立候选，且保留 `dist/`，从而修复 host
+  的 `../data/registry-snapshot.json` 离线 fallback 路径。新增测试会实际解包、强制网络失败并
+  验证该 snapshot fallback；真实 DSH E2E 仍通过。`pnpm run pack:check` 现同时对各 workspace
+  和该临时候选执行无脚本 `npm pack --dry-run`。源码包依旧 `private: true`；没有 npm 发布、tag
+  或可见性变更，也不会把本地 pack integrity 当作 registry integrity。
 
 ## 未完成事项
-1. 取得一个可公开安装的、权威声明 DSH engine、`dsh.platforms`、精确版本、sha512 integrity 与
-   npm registry tarball 的插件条目（或由 owner 审核的等价权威清单）；再执行无 mutation 目标
-   契约探针和真实生产 API DSH E2E。不得从包名、README 或 `bundle.patch` 推断这些字段。
-2. Desktop 分支提交/推送后，与已部署测试目标做一次端到端兼容性 smoke（不重复开发其已报告的
-   DTO/门禁实现）。
-3. 公开 npm 发布授权：确定 package scope、license/provenance、workspace 依赖发布顺序和
-   release tag/version。
+1. Owner 决定 `@cordis-mp/web` 的 npm scope/access、适用 license、maintainers、provenance 和
+   release version，并以其 npm 身份发布经审阅的候选。父仓库的 Apache-2.0 文件不能在未确认
+   授权范围时自动套用到这个嵌套独立工作树。
+2. 发布后，通过父仓库 `pnpm plugins:sync -- --pkg=@cordis-mp/web --no-assets` 取得 npm 的精确
+   version/sha512/tarball，再确认生产 `count>0`、运行目标 API probe 和真实生产 API DSH E2E。
+   不得从包名、README 或 `bundle.patch` 反推这些字段。
+3. 以已审核公开 slug 运行 Desktop 的 `CORDIS_MARKET_PROBE_SLUG=<slug> pnpm verify:cordis-market`；
+   再执行用户确认的 Desktop 安装→pending→显式 Activate→重启 E2E。若需 Microsoft Store
+   发布，还要走独立审查后更新 `store-curated-plugins.json`，不得提前放宽 allowlist。
 4. 触发并记录 `windows-best-effort` 的首个 GitHub Actions green run；Windows 保持 BEST_EFFORT。
 5. 8/24 后 codex 对 fc668e4..HEAD 补独立评审。
 
 ## 关键命令
-- 全部测试：`pnpm -r test`（当前 159 tests）
+- 全部测试：`pnpm -r test`（当前 161 tests）
 - 冒烟：`node scripts/dsh-smoke.mjs`
 - 真实 E2E：`node scripts/dsh-e2e-install.mjs`
 - 目标 API 无 mutation 验收：`CORDIS_RUN_API=https://<target>/api/v1 node scripts/cordis-run-contract-probe.mjs`
@@ -109,6 +116,7 @@
 - 构建：`node apps/web/scripts/build.mjs`
 - 打包 smoke tarball：`node apps/web/scripts/pack-smoke.mjs`
 - npm pack 预检：`pnpm run pack:check`
+- Desktop 生产只读 smoke（在 Desktop 仓库）：`pnpm verify:cordis-preset && pnpm verify:cordis-market`
 - CI 工作流静态校验：`actionlint .github/workflows/ci.yml`
 
 ## 关键文档

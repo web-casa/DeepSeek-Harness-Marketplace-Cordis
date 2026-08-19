@@ -2,10 +2,13 @@
 
 ## Scope and safety boundary
 
-The Desktop source tree is not present in this repository. This document is the
-handoff contract for its owner; it does **not** claim that Desktop has already
-migrated. The old `spikes/S6` desktop-shaped adapter is useful only as a port
-boundary experiment: its automatic activation behavior must not be copied.
+The Desktop source tree is not present in this repository, so this remains the
+handoff contract. Its separate `feat/cordis-v4-desktop` worktree has now been
+checked against production's direct JSON/ETag/304/JSON-404 and direct preset
+download probes. That only proves the zero-item production structure today;
+it does **not** claim a real public-plugin installation E2E. The old
+`spikes/S6` desktop-shaped adapter is useful only as a port-boundary
+experiment: its automatic activation behavior must not be copied.
 
 Desktop must consume the v4 JSON contract in
 [`cordis-run-api-contract.md`](./cordis-run-api-contract.md). It must preserve
@@ -136,5 +139,7 @@ Required adapter cases:
 - blocked item is visible but never yields an install mutation.
 
 The shared `catalog-core` fixture integration test covers the wire-level cursor,
-compatibility, ETag, detail, and error behavior. The Desktop repository must add
-its own deserialize/install-decision tests before switching its endpoint.
+compatibility, ETag, detail, and error behavior. The Desktop repository has its
+own deserialize/install-decision tests and a `pnpm verify:cordis-market` production
+structure probe. A real production installation test remains pending an approved
+public npm artifact and explicit user activation.

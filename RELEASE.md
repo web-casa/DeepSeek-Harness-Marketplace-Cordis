@@ -3,25 +3,29 @@
 ## Current release candidate
 
 - Version: `0.1.0` (root, six core workspaces, and `@cordis-mp/web` are aligned).
-- Status: packaging preflight is ready; no npm publication, tag, or visibility change has
-  been performed.
+- Status: the technical release candidate is ready; no npm publication, tag, or visibility
+  change has been performed.
 - Package policy: every workspace is currently `private: true`. Keep that protection until
   the package owner explicitly decides which packages, scope, license, maintainers, and
   provenance policy are public.
 
 ## Artifact boundary
 
-`@cordis-mp/web` is the DSH plugin deliverable. Its normal workspace manifest contains
-`workspace:*` dependencies, so a raw npm tarball is useful for metadata inspection but is
-not a standalone public install artifact. Use the existing self-contained DSH packer:
+`@cordis-mp/web` is the DSH plugin deliverable. Its normal workspace manifest deliberately
+remains private and contains `workspace:*` dependencies. The self-contained DSH packer turns
+it into a separate candidate manifest with no workspace dependencies, `private: false`,
+`dist/index.js`/`dist/client.js`, `data/registry-snapshot.json`, and the declared DSH
+`platforms`/`engines` metadata:
 
 ```bash
 node apps/web/scripts/build.mjs
 node apps/web/scripts/pack-smoke.mjs
 ```
 
-The second command prints a temporary `.tgz` path. `node scripts/dsh-smoke.mjs` and
-`node scripts/dsh-e2e-install.mjs` install that exact artifact into an isolated DSH profile.
+The second command prints a temporary `.tgz` path. It preserves `dist/`: flattening the host
+entry would make its `../data/registry-snapshot.json` fallback resolve outside the package.
+`node scripts/dsh-smoke.mjs` and `node scripts/dsh-e2e-install.mjs` install that exact artifact
+into an isolated DSH profile.
 
 ## Release preflight
 
@@ -35,9 +39,12 @@ node scripts/dsh-smoke.mjs
 node scripts/dsh-e2e-install.mjs
 ```
 
-`pnpm run pack:check` runs `npm pack --dry-run --ignore-scripts --json` for each workspace
-candidate. It checks aligned name/version metadata, nonempty file lists, and that ignored
-implementation directories are absent; it writes no tarball and runs no package scripts.
+`pnpm run pack:check` runs `npm pack --dry-run --ignore-scripts --json` for each workspace and
+for the temporary standalone Web candidate. It checks aligned name/version metadata, the exact
+release layout, no leaked workspace dependencies, nonempty file lists, and that ignored
+implementation directories are absent. The candidate tarball exists only under the system temp
+directory; no registry artifact is written or published, and its local pack integrity is never
+used as an installation integrity.
 
 ## Before a public npm release
 
@@ -49,10 +56,12 @@ approved all of the following:
 2. Per-package README, license, ownership/access, npm provenance, and registry policy.
 3. A release version if it is not `0.1.0`; update all aligned manifests intentionally and rerun
    the full preflight.
-4. The cordis.run production API rollout gate in the parent repository's
-   `docs/CORDIS-API-V4.md`. The code is implemented but not deployed; fixture/local E2E is
-   not evidence of a production API release. A dedicated approved E2E plugin is required
-   for the target-network lifecycle check.
+4. A public artifact successfully synchronized by the deployed cordis.run v4 API. The service
+   itself is live and direct preset download is verified, but the strict production catalog is
+   currently empty until npm provides the exact version, SHA-512 integrity and tarball for an
+   approved package. Fixture/local E2E is not evidence of a production API lifecycle release.
+5. For Microsoft Store distributions, an independent review and allowlist snapshot update in
+   the Desktop repository; production catalog visibility alone never grants Store install rights.
 
 After approval and a clean preflight, create an annotated tag such as `v0.1.0` from the
 reviewed commit. Publishing remains a separate owner-authorized action.
@@ -74,7 +83,9 @@ reviewed commit. Publishing remains a separate owner-authorized action.
 - Workspace tests, host smoke, DSH smoke, and DSH install/activate/restart E2E passed.
 
 ### Known boundary
-- Production cordis.run API deployment, snapshot backfill, target probe, and dedicated
-  E2E-plugin validation remain externally pending. Desktop v4 migration is reported complete
-  on `feat/cordis-v4-desktop`, but is outside this checkout and needs target smoke after push.
+- Production cordis.run v4 API and direct preset download are deployed, but no strict public
+  plugin artifact has yet entered the catalog. Its npm publication, registry sync, target probe,
+  and lifecycle E2E remain externally pending.
+- Desktop v4 has a passing production structural smoke; an actual Desktop install E2E still
+  requires the reviewed public entry and explicit user activation.
 ```

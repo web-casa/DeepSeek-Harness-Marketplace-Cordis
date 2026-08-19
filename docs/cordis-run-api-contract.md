@@ -1,11 +1,10 @@
 # cordis.run Market API 契约 v4（Web / Desktop 共用）
 
-> 状态：后端实现在父仓库 `/home/ivmm/daohang/toolso-ai-open`，但尚未部署到生产。
-> 已实现 `GET /api/v1/plugins`、`GET /api/v1/plugins/{slug}` 和同域 preset 直出；严格
-> registry 工件快照、ETag/304、cursor、JSON 404 均有本机真实 Next + 临时 PostgreSQL 验证。
-> 基线时生产端点仍返回 Next.js 404 HTML；在实际部署、快照回填和目标探针通过前，两端继续使用
-> 本地 fixture `spikes/S1/fixture-server.mjs`，并通过 `CORDIS_RUN_API` 覆盖 base URL。不得把
-> 本机验证或 fixture E2E 表述为生产 API E2E。
+> 状态（2026-08-19）：后端已部署到 `https://cordis.run`。`GET /api/v1/plugins`、
+> `GET /api/v1/plugins/{slug}` 已验证直接 JSON、ETag/304 与 JSON 404；preset 下载也已验证
+> 同域直出 `200 application/zip`、无 `Location`。严格目录目前 `count=0`：没有已同步的 npm
+> 工件同时具备权威 DSH engine/platform 与 registry version/SHA-512/tarball 证据。fixture 仍用于
+> 独立测试；不得把 fixture E2E 或空目录的结构 probe 表述为生产安装 E2E。
 
 ## 0. 基础约定
 - Base：`https://cordis.run/api/v1`
@@ -107,11 +106,11 @@ GET /plugins/{slug}?fields=versions,blocked,entryRevision
 - 仅接受 `https://cordis.run/api/presets/<slug>/download`；
 - `reqwest::redirect::Policy::none()`，不跟随重定向。
 因此 cordis.run 后端必须让该 URL 直接返回 `200 application/zip`，最终响应
-host 仍为 `cordis.run`。当前 `302 -> statics.xlayers.dev` 行为必须改造。
+host 仍为 `cordis.run`。生产已在 2026-08-19 验证这一点（无重定向）。
 
-## 5. 桌面端 DTO 迁移要求（已确认）
-桌面当前为平铺 `npm/version`、`description: String`、`page/total/per_page: u32`。
-按本轮结论，桌面需改为：
+## 5. 桌面端 DTO 要求（已实现并保持为契约）
+Desktop 的 `feat/cordis-v4-desktop` 已采用以下 wire shape；这些规则仍是安装边界，不能为
+兼容旧条目放宽：
 - 解析嵌套 `source: { type, packageName, version, integrity, registry, tarball }`
   （同时可保留 `npm/version` 作为 deprecated 兼容字段，但不作为安装依据）；
 - `description: { zh, en }` 或 `Option<LocalizedText>`；
@@ -120,13 +119,15 @@ host 仍为 `cordis.run`。当前 `302 -> statics.xlayers.dev` 行为必须改�
 - 桌面仍发送 `page` / `per_page` 查询参数可以，fixture 已兼容。
 
 ## 6. 联调验收清单
-- [ ] 列表：`platform=web` / `platform=desktop` / 无 platform 三种返回正确
-- [ ] 搜索 q、分类、排序、cursor 分页
-- [ ] 详情 slug 404 时返回 JSON 错误，不是 Next.js HTML
-- [ ] npm 条目带精确 version + integrity + tarball
-- [ ] blocked 条目在列表中可展示但 installable=false
-- [ ] 304 缓存链路可用
-- [ ] 生产域名确认；如需测试域名 / Host / Token 请一并提供
+- [x] 生产 `platform=desktop&limit=1` 返回直接 JSON、ETag/304、`count + page`；Desktop
+  `pnpm verify:cordis-market` 已实际探测。
+- [x] 生产缺失 slug 返回 JSON `NOT_FOUND`，不是 Next.js HTML。
+- [x] 生产 preset download 返回无重定向 `200 application/zip`；Desktop
+  `pnpm verify:cordis-preset` 已实际探测。
+- [ ] 发布一个 npm 工件后验证 `platform=web` / `platform=desktop` / 无 platform、q/分类/排序/
+  cursor 分页、精确 version/integrity/tarball、blocked 展示但不可安装。
+- [ ] 以公开 slug 运行 `CORDIS_MARKET_PROBE_SLUG=<slug> pnpm verify:cordis-market`，再做经过
+  用户确认的 Desktop install → pending → explicit Activate → restart E2E。
 
 ## 6. 联调前本地替代
 ```bash
