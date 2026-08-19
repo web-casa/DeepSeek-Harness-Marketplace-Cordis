@@ -1,7 +1,7 @@
 // Public-release gate: validates a candidate locally. It never contacts the npm
 // registry, GitHub, a database, or a deployment target, and it never publishes or tags.
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,6 +17,16 @@ const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 function fail(message) {
   console.error(`PUBLIC RELEASE BLOCKED: ${message}`)
   process.exitCode = 1
+}
+
+function writeGitHubOutput(name, value) {
+  const output = process.env.GITHUB_OUTPUT
+  if (!output) return
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`invalid GitHub output name: ${name}`)
+  if (typeof value !== 'string' || /[\r\n]/.test(value)) {
+    throw new Error(`GitHub output ${name} must be a single-line string`)
+  }
+  appendFileSync(output, `${name}=${value}\n`, 'utf8')
 }
 
 function npmPackedFiles(candidateDir) {
@@ -71,12 +81,15 @@ try {
     rmSync(unpack, { recursive: true, force: true })
   }
 
-  console.log(JSON.stringify({
+  const result = {
     status: 'ready',
     package: `${manifest.name}@${manifest.version}`,
     license: manifest.license,
     artifact,
-  }, null, 2))
+  }
+  writeGitHubOutput('artifact', result.artifact)
+  writeGitHubOutput('package', result.package)
+  console.log(JSON.stringify(result, null, 2))
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error))
 }

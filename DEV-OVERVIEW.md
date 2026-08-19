@@ -44,7 +44,7 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
-- 163 tests / 163 pass。
+- 164 tests / 164 pass。
 - 真实 DSH E2E PASS：install → patch disable → activate → restart → dsh-market
   路由 200。
 - `verifyInstalled` 已复核 `node_modules` manifest 的 name/version，及
@@ -96,12 +96,14 @@
   的 `../data/registry-snapshot.json` 离线 fallback 路径。新增测试会实际解包、强制网络失败并
   验证该 snapshot fallback；真实 DSH E2E 仍通过。`pnpm run pack:check` 现同时对各 workspace
   和该临时候选执行无脚本 `npm pack --dry-run`。源码包依旧 `private: true`；没有 npm 发布、tag
-  或可见性变更，也不会把本地 pack integrity 当作 registry integrity。它仍不是可公开发布的完成品：
-  当前没有 owner 已确认的 license declaration/版权主体，也没有随候选打包的 license 文件；不得从父仓库
-  license 推断或复制。新增的 `pnpm run release:public-check` 是 opt-in 本地门禁：只有在 owner
-  补齐 declaration、`LICENSE` 并完成 build 后，它才会生成候选并复核 archive 与 npm 无脚本、离线
-  dry-run 文件清单；
-  当前预期 fail-closed，且不触发 npm/GitHub/数据库/部署 mutation。
+  或可见性变更，也不会把本地 pack integrity 当作 registry integrity。owner 已确认公开
+  `@cordis-mp/web@0.1.0`、`latest`、`dev-assistant` 分类，以及 MIT
+  `Copyright (c) 2026 www.Web.Casa`；私有源码 manifest 现声明 `MIT`，且公开候选显式包含 `LICENSE`。
+  `pnpm run release:public-check` 是 opt-in 本地门禁：完成 build 后会生成候选并复核 archive 与 npm
+  无脚本、离线 dry-run 文件清单；现在预期 ready，且不触发 npm/GitHub/数据库/部署 mutation。实际
+  Trusted Publishing 仍需 owner 确认的 GitHub remote、匹配的 `repository.url` 与 npm publisher 配置；npm
+  要求包已存在才能配置 publisher，因此首个 `0.1.0` 还需单独授权的 interactive/2FA 或 staged bootstrap，
+  后续版本才可锁定 OIDC。
 - 父仓库的单包 npm 同步现有独立只读预检：
   `pnpm plugins:sync -- --pkg=<package> --dry-run --no-assets` 只读取 npm
   packument，并要求包名、latest `dsh.bundle`、精确 version/SHA-512/tarball/
@@ -114,9 +116,10 @@
   仍为 404。因而没有实际生产条目，也没有把结构 probe 误报为生产安装 E2E。
 
 ## 未完成事项
-1. Owner 决定 `@cordis-mp/web` 的 npm scope/access、适用 license、maintainers、provenance、
-   release version 及已配置的 Cordis curation category，并以其 npm 身份发布经审阅的候选。
-   父仓库的 Apache-2.0 文件不能在未确认授权范围时自动套用到这个嵌套独立工作树。
+1. 已确认公开 `@cordis-mp/web@0.1.0`、`latest`、`dev-assistant`、MIT 与 Trusted Publishing；仍需
+   单独确认首个版本的 interactive/2FA 或 staged bootstrap，并提供独立仓库的 GitHub remote、在候选加入
+   精确匹配的 `repository.url`、配置 npm trusted publisher，并确认 maintainer 列表后才能让后续版本从
+   GitHub Actions 发布。父仓库的 Apache-2.0 文件没有被复制或套用。
 2. 发布后，先运行父仓库的只读预检
    `pnpm plugins:sync -- --pkg=@cordis-mp/web --dry-run --no-assets`；仅在它报告 strict
    artifact ready 后，使用 owner 确认的分类运行
@@ -130,7 +133,7 @@
 5. 8/24 后 codex 对 fc668e4..HEAD 补独立评审。
 
 ## 关键命令
-- 全部测试：`pnpm -r test`（当前 163 tests）
+- 全部测试：`pnpm -r test`（当前 164 tests）
 - 冒烟：`node scripts/dsh-smoke.mjs`
 - 真实 E2E：`node scripts/dsh-e2e-install.mjs`
 - 目标 API 无 mutation 验收：`CORDIS_RUN_API=https://<target>/api/v1 node scripts/cordis-run-contract-probe.mjs`
@@ -138,7 +141,7 @@
 - 构建：`node apps/web/scripts/build.mjs`
 - 打包 smoke tarball：`node apps/web/scripts/pack-smoke.mjs`
 - npm pack 预检：`pnpm run pack:check`
-- 公开发布候选本地门禁（当前因缺少 owner 确认的 license 而预期 fail-closed）：
+- 公开发布候选本地门禁（MIT source/`LICENSE` 就绪后应为 `ready`）：
   `pnpm run release:public-check`
 - 发布后单包只读 registry 预检（在父仓库）：
   `pnpm plugins:sync -- --pkg=@cordis-mp/web --dry-run --no-assets`

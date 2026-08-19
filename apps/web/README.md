@@ -37,19 +37,23 @@ The tarball contains `dist/index.js`, `dist/client.js`, the root-level
 `data/registry-snapshot.json`, and the bundle patch. Keeping `dist/` intact is
 required for the host's offline snapshot fallback to resolve correctly.
 
-No npm publication is performed by these commands. A public registry release
-still requires the package owner to approve the npm scope/access, license,
-maintainers, provenance policy, and release version. Once published, run the
-parent repository's registry sync so cordis.run can capture the registry's
-exact tarball URL and SHA-512 integrity; hand-written catalog source data is
-not accepted.
+No npm publication is performed by these commands. The owner has approved the
+public `@cordis-mp/web@0.1.0` candidate, dist-tag `latest`, the `dev-assistant`
+Cordis category, and MIT with `Copyright (c) 2026 www.Web.Casa`. The workspace
+source deliberately remains private; only its generated, dependency-free
+candidate is publishable.
 
-The current source has no selected legal license declaration or bundled license file. That
-legal decision must be made and added to the generated artifact before any
-public publication; it must not be copied from the parent repository by
-assumption.
+Before publishing, run `pnpm run release:public-check` from the repository
+root. It locally verifies the declaration, bounded regular `LICENSE` file,
+generated candidate, and npm's script-free offline dry-run file list; it does
+not publish or contact a registry.
 
-After that owner decision, run `pnpm run release:public-check` from the
-repository root before publishing. It locally verifies the declaration, a
-bounded regular `LICENSE` file, the generated candidate, and npm's script-free
-offline dry-run file list; it does not publish or contact a registry.
+Trusted Publishing is the selected publication mechanism. It still needs the
+owner-confirmed GitHub remote, matching candidate `repository.url`, and npm
+trusted-publisher configuration. npm requires a package to exist before a
+Trusted Publisher can be configured, so this initial `0.1.0` release also needs
+an owner-approved interactive/2FA or staged bootstrap publication. Subsequent
+releases can then be restricted to OIDC. Once npm has published the candidate,
+run the parent repository's registry sync so cordis.run can capture the
+registry's exact tarball URL and SHA-512 integrity; hand-written catalog source
+data is not accepted.

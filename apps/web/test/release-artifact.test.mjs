@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
@@ -17,8 +17,10 @@ import {
 } from '../scripts/release-artifact.mjs'
 
 const app = dirname(fileURLToPath(import.meta.url))
+const root = join(app, '..', '..', '..')
 const buildScript = join(app, '..', 'scripts', 'build.mjs')
 const packScript = join(app, '..', 'scripts', 'pack-smoke.mjs')
+const publicReleaseCheckScript = join(root, 'scripts', 'public-release-check.mjs')
 
 function packCandidate() {
   execFileSync(process.execPath, [buildScript], { stdio: 'pipe' })
@@ -40,18 +42,27 @@ test('release candidate packer fails closed when private source metadata loses a
   assert.match(releaseManifestProblem(accidentallyPublicSource) ?? '', /must remain private/)
 })
 
-test('public release gate requires explicit legal metadata without changing the local candidate gate', () => {
+test('public release gate validates the owner-approved source and still rejects missing legal metadata', () => {
   const sourceManifest = JSON.parse(readFileSync(join(app, '..', 'package.json'), 'utf8'))
   assert.equal(releaseManifestProblem(sourceManifest), null)
-  assert.match(publicReleaseManifestProblem(sourceManifest) ?? '', /license declaration/)
+  assert.equal(publicReleaseManifestProblem(sourceManifest), null)
+  assert.equal(publicReleaseArtifactProblem(join(app, '..'), sourceManifest), null)
+  assert.match(readFileSync(join(app, '..', 'LICENSE'), 'utf8'), /Copyright \(c\) 2026 www\.Web\.Casa/)
+
+  const missingDeclaration = structuredClone(sourceManifest)
+  delete missingDeclaration.license
+  assert.match(publicReleaseManifestProblem(missingDeclaration) ?? '', /license declaration/)
 
   const unlicensed = structuredClone(sourceManifest)
   unlicensed.license = 'UNLICENSED'
   assert.match(publicReleaseManifestProblem(unlicensed) ?? '', /must not declare license UNLICENSED/)
 
-  const declaredWithoutArtifact = structuredClone(sourceManifest)
-  declaredWithoutArtifact.license = 'MIT'
-  assert.match(publicReleaseArtifactProblem(join(app, '..'), declaredWithoutArtifact) ?? '', /checked-in LICENSE file/)
+  const artifactless = mkdtempSync(join(tmpdir(), 'cordis-public-release-artifactless-'))
+  try {
+    assert.match(publicReleaseArtifactProblem(artifactless, sourceManifest) ?? '', /checked-in LICENSE file/)
+  } finally {
+    rmSync(artifactless, { recursive: true, force: true })
+  }
 })
 
 test('public release candidate includes the declared bounded LICENSE artifact', () => {
@@ -101,6 +112,33 @@ test('public release candidate includes the declared bounded LICENSE artifact', 
     if (unpack) rmSync(unpack, { recursive: true, force: true })
     if (artifactDir) rmSync(artifactDir, { recursive: true, force: true })
     rmSync(fixture, { recursive: true, force: true })
+  }
+})
+
+test('public release check emits a GitHub Actions artifact output only after validation', () => {
+  execFileSync(process.execPath, [buildScript], { stdio: 'pipe' })
+  const outputDir = mkdtempSync(join(tmpdir(), 'cordis-public-release-output-'))
+  const output = join(outputDir, 'github-output')
+  let artifactDir = null
+  try {
+    const result = spawnSync(process.execPath, [publicReleaseCheckScript], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, GITHUB_OUTPUT: output },
+    })
+    assert.equal(result.status, 0, result.stderr)
+    const ready = JSON.parse(result.stdout)
+    assert.equal(ready.status, 'ready')
+    assert.equal(ready.package, '@cordis-mp/web@0.1.0')
+    artifactDir = dirname(ready.artifact)
+    assert.equal(basename(ready.artifact), 'cordis-mp-web-release-candidate.tgz')
+    assert.ok(artifactDir.startsWith(join(tmpdir(), 'cordis-web-pack-')))
+    const outputs = new Map(readFileSync(output, 'utf8').trim().split('\n').map((line) => line.split(/=(.*)/s)))
+    assert.equal(outputs.get('artifact'), ready.artifact)
+    assert.equal(outputs.get('package'), ready.package)
+  } finally {
+    if (artifactDir) rmSync(artifactDir, { recursive: true, force: true })
+    rmSync(outputDir, { recursive: true, force: true })
   }
 })
 
