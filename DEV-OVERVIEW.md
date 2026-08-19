@@ -53,14 +53,19 @@
 - Web 市场已提供详情弹窗、仅渲染 `https://cdn.cordis.run` 截图、cursor 历史分页、
   Web/Desktop 平台徽章及可展开的错误诊断（code/HTTP/request ID/retry）。安装和启用
   仍只经既有 guard-backed controller/API；页面不新增 mutation 通道。
+- 已接入 `.github/workflows/ci.yml`：两个无凭据 Ubuntu job 分别执行 test/build/host
+  smoke 与真实 DSH smoke/E2E；Node 24.18.0、pnpm 11.10.0、DSH 0.1.0-rc.7 和
+  Actions 提交均固定。CI 的 DSH integration 只使用临时 profile 与本地 fixture，
+  不把生产 API 当作可用依赖。
+- pnpm 仅显式批准 `esbuild` 的构建脚本（`allowBuilds.esbuild: true`）；这是 Web
+  打包所需的已声明 devDependency，其余依赖仍不获隐式构建脚本授权。
 
 ## 未完成事项
 1. cordis.run 生产 API 按 docs/cordis-run-api-contract.md 上线。
 2. 桌面端按 `docs/desktop-dto-migration.md` 实际迁移 DTO（source / description / page）。
-3. CI：pnpm test + build + dsh smoke + e2e。
-4. 发布：npm pack、tag、release 文档。
-5. Windows BEST_EFFORT CI 实证。
-6. 8/24 后 codex 对 fc668e4..HEAD 补独立评审。
+3. 发布：npm pack、tag、release 文档。
+4. Windows BEST_EFFORT CI 实证。
+5. 8/24 后 codex 对 fc668e4..HEAD 补独立评审。
 
 ## 关键命令
 - 全部测试：`pnpm -r test`（当前 151 tests）
@@ -69,6 +74,7 @@
 - 目标 API 无 mutation 验收：`CORDIS_RUN_API=https://<target>/api/v1 node scripts/cordis-run-contract-probe.mjs`
 - 构建：`node apps/web/scripts/build.mjs`
 - 打包 smoke tarball：`node apps/web/scripts/pack-smoke.mjs`
+- CI 工作流静态校验：`actionlint .github/workflows/ci.yml`
 
 ## 关键文档
 - PLAN-*.md / M2A-*.md / JOURNAL-SPEC.md / REVIEWS.md / SELF-REVIEW-*.md
