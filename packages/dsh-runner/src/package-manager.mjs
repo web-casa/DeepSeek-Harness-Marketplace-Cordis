@@ -62,6 +62,13 @@ function pnpmLockRecords(lockfile, artifact) {
       current.resolutionIndent = 4
       continue
     }
+    // A later mapping at the same indentation is no longer part of
+    // `resolution`.  In particular, an unrelated `dependencies.integrity`
+    // must never be accepted as the lock proof for this artifact.
+    if (/^ {4}[^\s].*?:\s*(?:#.*)?$/.test(line)) {
+      current.resolutionIndent = null
+      continue
+    }
     if (current.resolutionIndent === 4) {
       const nestedIntegrity = /^ {6}integrity:\s*(.*?)\s*(?:#.*)?$/.exec(line)
       if (nestedIntegrity) current.integrity = unquoteYamlScalar(nestedIntegrity[1])
@@ -95,11 +102,14 @@ export class DshPackageManagerPort {
     return files
   }
   async installVerifiedArtifact(artifact, signal) {
-    const result = await this.runner.run([...this.runner.pluginArgs(), 'add', this.#spec(artifact), '--ignore-scripts'], { signal })
+    // dsh forwards these arguments verbatim to pnpm.  Keep the package spec
+    // after `--` so a valid npm name beginning with a dash cannot be parsed as
+    // a pnpm option.
+    const result = await this.runner.run([...this.runner.pluginArgs(), 'add', '--ignore-scripts', '--', this.#spec(artifact)], { signal })
     return { ...result, profileFiles: result.exitCode === 0 ? this.#profileFiles() : {} }
   }
   async remove(packageName, signal) {
-    const result = await this.runner.run([...this.runner.pluginArgs(), 'remove', packageName], { signal })
+    const result = await this.runner.run([...this.runner.pluginArgs(), 'remove', '--', packageName], { signal })
     return { ...result, profileFiles: result.exitCode === 0 ? this.#profileFiles() : {} }
   }
   async verifyInstalled(artifact) {

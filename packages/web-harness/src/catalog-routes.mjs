@@ -20,8 +20,8 @@ export function parseListQuery(url) {
     const limit = Math.min(100, Math.max(1, parseInt(rawLimit || '50', 10) || 50))
     return { q: q || undefined, category, platform, sort, order, cursor, limit }
   }
-  const page = parseInt(url.searchParams.get('page') || '1', 10) || 1
-  const perPage = parseInt(url.searchParams.get('per_page') || '50', 10) || 50
+  const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10) || 1)
+  const perPage = Math.min(100, Math.max(1, parseInt(url.searchParams.get('per_page') || '50', 10) || 50))
   return { q: q || undefined, category, platform, sort, order, page, perPage }
 }
 
@@ -36,7 +36,9 @@ export function createCatalogHandler(catalog) {
       }
       const m = url.pathname.match(/^\/cordis-mp\/plugin\/([^/]+)$/)
       if (m) {
-        const slug = decodeURIComponent(m[1])
+        let slug
+        try { slug = decodeURIComponent(m[1]) }
+        catch { return json(res, 400, { error: { code: 'BAD_SLUG', message: 'slug is not valid URL encoding' } }) }
         const detail = await catalog.detail(slug)
         return json(res, 200, { ok: true, plugin: detail })
       }

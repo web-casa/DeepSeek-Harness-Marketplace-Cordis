@@ -70,3 +70,18 @@ test('parseListQuery preserves cursor pagination without legacy page parameters'
   assert.equal(q.page, undefined)
   assert.equal(q.perPage, undefined)
 })
+
+test('parseListQuery clamps legacy pagination to the documented range', () => {
+  const q = parseListQuery(new URL('http://x/cordis-mp/catalog?page=-3&per_page=999'))
+  assert.equal(q.page, 1)
+  assert.equal(q.perPage, 100)
+})
+
+test('malformed encoded detail slug returns a JSON 400 diagnostic', async () => {
+  const server = await listen(createCatalogHandler(fakeCatalog()))
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/cordis-mp/plugin/%E0%A4%A`)
+  const body = await res.json()
+  assert.equal(res.status, 400)
+  assert.equal(body.error.code, 'BAD_SLUG')
+  server.close()
+})

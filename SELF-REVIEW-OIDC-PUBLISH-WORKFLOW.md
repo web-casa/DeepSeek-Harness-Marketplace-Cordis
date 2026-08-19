@@ -40,7 +40,8 @@ Date: 2026-08-20
 
 - At the original workflow-review point, `pnpm -r test` — 164/164 pass;
   journal-core POSIX FULL 96/96. The subsequent `0.1.1` guard candidate is
-  covered by its own 166/166 final-validation record.
+  covered by its historical 166/166 final-validation record; the superseding
+  whole-project review is `SELF-REVIEW-CODEX-FULL-REVIEW.md` (198/198).
 - `pnpm run pack:check`, `pnpm run release:public-check`, host smoke, DSH
   smoke, and DSH install/activate/restart E2E — pass.
 - `actionlint .github/workflows/ci.yml .github/workflows/publish.yml` and

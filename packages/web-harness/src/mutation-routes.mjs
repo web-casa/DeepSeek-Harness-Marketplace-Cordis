@@ -9,21 +9,41 @@ function json(res, status, body) {
 
 export function readJsonBody(req, limit = 64 * 1024) {
   return new Promise((resolve, reject) => {
-    let size = 0; const chunks = []
-    req.on('data', c => { size += c.length; if (size > limit) { reject(Object.assign(new Error('body too large'), { code: 'BODY_TOO_LARGE' })); req.destroy(); return } chunks.push(c) })
-    req.on('end', () => {
-      if (!chunks.length) return resolve({})
-      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))) }
-      catch (e) { reject(Object.assign(new Error('invalid JSON body'), { code: 'BAD_JSON' })) }
+    let size = 0; let settled = false; const chunks = []
+    const fail = error => { if (!settled) { settled = true; reject(error) } }
+    req.on('data', c => {
+      if (settled) return
+      size += c.length
+      if (size > limit) {
+        fail(Object.assign(new Error('body too large'), { code: 'BODY_TOO_LARGE' }))
+        // Drain the request rather than destroying the socket, so the caller
+        // receives the deterministic JSON 400 diagnostic.
+        req.resume()
+        return
+      }
+      chunks.push(c)
     })
-    req.on('error', reject)
+    req.on('end', () => {
+      if (settled) return
+      if (!chunks.length) { settled = true; return resolve({}) }
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        settled = true
+        resolve(body)
+      }
+      catch { fail(Object.assign(new Error('invalid JSON body'), { code: 'BAD_JSON' })) }
+    })
+    req.on('error', fail)
   })
 }
 
 export function createMutationHandler({ installService, platform = 'web', guard = null }) {
   return async (req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1')
-    if (url.pathname === '/cordis-mp/status' && req.method === 'GET') return json(res, 200, { ok: true, busy: false })
+    if (url.pathname === '/cordis-mp/status' && req.method === 'GET') {
+      const pending = typeof installService.pendingStatus === 'function' ? installService.pendingStatus() : []
+      return json(res, 200, { ok: true, busy: false, pending })
+    }
     if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return }
     if (guard) {
       const check = guard.guard(req)
@@ -48,7 +68,9 @@ export function createMutationHandler({ installService, platform = 'web', guard 
       json(res, 404, { error: { code: 'NOT_FOUND', message: 'no such route' } })
     } catch (e) {
       if (e instanceof InstallError) {
-        const status = ['MUTATION_BUSY', 'MUTATION_FENCED', 'SELF_INSTALL_FORBIDDEN', 'HOST_ENTRY_CONFLICT'].includes(e.code) ? 409 : 400
+        const status = ['MUTATION_BUSY', 'MUTATION_FENCED', 'SELF_INSTALL_FORBIDDEN', 'SELF_UNINSTALL_FORBIDDEN', 'HOST_ENTRY_CONFLICT', 'PENDING_ACTIVATION_EXISTS'].includes(e.code)
+          ? 409
+          : e.code === 'CATALOG_RECHECK_FAILED' ? 503 : 400
         return json(res, status, { error: { code: e.code, message: e.message } })
       }
       if (e.code === 'BAD_JSON' || e.code === 'BODY_TOO_LARGE') return json(res, 400, { error: { code: e.code, message: e.message } })

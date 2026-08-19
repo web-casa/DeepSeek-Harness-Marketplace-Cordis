@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { FileLock } from '@cordis-mp/journal-core'
@@ -72,6 +72,28 @@ test('host startup fails closed while profile recovery lock is busy', async () =
     assert.deepEqual(routes, [])
   } finally {
     lock.release()
+    if (prevDir === undefined) delete process.env.CORDIS_MP_PROFILE_DIR; else process.env.CORDIS_MP_PROFILE_DIR = prevDir
+  }
+})
+
+test('host startup fails closed when durable pending activation state is corrupt', async () => {
+  const prevDir = process.env.CORDIS_MP_PROFILE_DIR
+  const dir = mkdtempSync(join(tmpdir(), 'cordis-host-pending-'))
+  mkdirSync(join(dir, '.cordis-mp'), { recursive: true })
+  writeFileSync(join(dir, '.cordis-mp', 'pending-activation.json'), '{bad json')
+  process.env.CORDIS_MP_PROFILE_DIR = dir
+  try {
+    let captured
+    apply({ inject(deps, fn) { captured = { deps, fn } } })
+    const routes = []
+    let effectDone
+    await captured.fn({
+      webServer: { register(route) { routes.push(route); return () => {} } },
+      effect(fn) { effectDone = fn() },
+    })
+    await assert.rejects(() => effectDone, e => e.code === 'PENDING_STATE_INVALID')
+    assert.deepEqual(routes, [])
+  } finally {
     if (prevDir === undefined) delete process.env.CORDIS_MP_PROFILE_DIR; else process.env.CORDIS_MP_PROFILE_DIR = prevDir
   }
 })

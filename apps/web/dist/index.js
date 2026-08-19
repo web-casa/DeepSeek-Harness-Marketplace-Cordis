@@ -18,13 +18,14 @@ function normalizeLocalized(value, fallback = "") {
 function normalizeSource(item) {
   const source = isObject(item.source) ? item.source : null;
   const flat = { packageName: item.npm ?? null, version: item.version ?? null, integrity: item.integrity ?? null };
+  const legacy = source === null;
   return {
-    type: source?.type ?? (flat.packageName ? "npm" : null),
-    packageName: source?.packageName ?? flat.packageName,
-    version: source?.version ?? flat.version,
-    integrity: source?.integrity ?? flat.integrity,
-    registry: source?.registry ?? "https://registry.npmjs.org",
-    tarball: source?.tarball ?? null
+    type: source?.type ?? null,
+    packageName: source?.packageName ?? (legacy ? flat.packageName : null),
+    version: source?.version ?? (legacy ? flat.version : null),
+    integrity: source?.integrity ?? (legacy ? flat.integrity : null),
+    registry: source?.registry ?? (legacy ? item.registry ?? null : null),
+    tarball: source?.tarball ?? (legacy ? item.tarball ?? null : null)
   };
 }
 function normalizePage(body, perPage) {
@@ -69,25 +70,30 @@ function validateCatalogItem(item) {
 }
 function installability(item, platform = "web") {
   const reasons = [];
-  const src = item.source;
+  const src = item?.source || {};
   if (src.type !== "npm") reasons.push("non-npm-source");
   else {
     if (!src.packageName || !NPM_NAME_RE.test(src.packageName)) reasons.push("bad-package-name");
     if (typeof src.version !== "string" || !/^\d+\.\d+\.\d+/.test(src.version)) reasons.push("bad-version");
     if (typeof src.integrity !== "string" || !HASH_RE.test(src.integrity)) reasons.push("missing-integrity");
     if (!["https://registry.npmjs.org"].includes(src.registry)) reasons.push("registry-not-allowed");
-    if (src.tarball) {
+    if (typeof src.tarball !== "string" || src.tarball.length === 0) reasons.push("missing-tarball");
+    else {
       try {
-        if (new URL(src.tarball).hostname !== new URL(src.registry).hostname) reasons.push("tarball-host-mismatch");
+        const registry2 = new URL(src.registry);
+        const tarball = new URL(src.tarball);
+        if (tarball.protocol !== registry2.protocol || tarball.hostname !== registry2.hostname || tarball.port !== registry2.port) reasons.push("tarball-origin-mismatch");
       } catch {
         reasons.push("bad-tarball-url");
       }
     }
   }
-  if (!item.platforms.includes(platform) && !item.platforms.includes("unknown")) reasons.push(`platform-${item.platforms.join("+")}`);
-  if (item.blocked) reasons.push("blocked");
-  if (item.deprecated) reasons.push("deprecated");
-  if (item.engines?.dsh && !item.engines.dsh.startsWith(">=")) reasons.push("bad-engines-dsh");
+  const platforms = Array.isArray(item?.platforms) ? item.platforms : [];
+  if (!platforms.includes(platform)) reasons.push(`platform-${platforms.join("+")}`);
+  if (item?.blocked) reasons.push("blocked");
+  if (item?.deprecated) reasons.push("deprecated");
+  if (typeof item?.entryRevision !== "string" || item.entryRevision.length === 0) reasons.push("missing-entry-revision");
+  if (typeof item?.engines?.dsh !== "string" || !item.engines.dsh.startsWith(">=")) reasons.push("bad-engines-dsh");
   return { installable: reasons.length === 0, reasons, reason: reasons.join(",") };
 }
 
@@ -102,6 +108,10 @@ var CatalogError = class extends Error {
   }
 };
 var DEFAULT_BASE = "https://cordis.run/api/v1";
+function boundedPositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? Math.min(100, parsed) : fallback;
+}
 function isContractScreenshot(value) {
   try {
     const url = new URL(value);
@@ -138,12 +148,14 @@ var CatalogClient = class {
     try {
       res = await this.fetchImpl(key, { method: "GET", headers, redirect: "error" });
     } catch (e) {
+      if (fresh) throw new CatalogError("NETWORK", "fresh catalog request failed");
       const stale2 = this.#cached(key);
       if (stale2) return { ...stale2, source: "stale-cache" };
       if (this.snapshot) return { source: "snapshot", ...this.#snapshotFor(path) };
       throw new CatalogError("NETWORK", `catalog request failed: ${e.message}`);
     }
     if (res.status === 304) {
+      if (fresh) throw new CatalogError("NO_FRESH_RESPONSE", "server returned 304 for a fresh catalog request", { status: 304 });
       const cached = hit;
       if (cached) return { ...cached, source: "cache" };
       throw new CatalogError("NO_CACHE", "server returned 304 but no cache entry exists", { status: 304 });
@@ -173,18 +185,18 @@ var CatalogClient = class {
     if (platform) items = items.filter((i) => i.platforms.includes(platform));
     const term = (q2.get("q") || "").toLowerCase();
     if (term) items = items.filter((i) => i.slug.toLowerCase().includes(term) || i.name.toLowerCase().includes(term));
-    const page = parseInt(q2.get("page") || q2.get("cursor") || "1", 10) || 1;
-    const perPage = parseInt(q2.get("per_page") || q2.get("limit") || "50", 10) || 50;
+    const page = boundedPositiveInt(q2.get("page") || q2.get("cursor") || "1", 1);
+    const perPage = boundedPositiveInt(q2.get("per_page") || q2.get("limit") || "50", 50);
     const start = (page - 1) * perPage;
     return { data: { ...this.snapshot, count: items.length, page: { cursor: String(page), hasMore: start + perPage < items.length, limit: perPage }, items: items.slice(start, start + perPage) } };
   }
   async list(options = {}) {
     const qs2 = new URLSearchParams();
     for (const k2 of ["q", "category", "platform", "sort", "order"]) if (options[k2] !== void 0 && options[k2] !== null && options[k2] !== "") qs2.set(k2, options[k2]);
-    if (options.page) qs2.set("page", String(options.page));
-    if (options.perPage) qs2.set("per_page", String(options.perPage));
-    if (options.cursor) qs2.set("cursor", String(options.cursor));
-    if (options.limit) qs2.set("limit", String(options.limit));
+    if (options.page !== void 0 && options.page !== null) qs2.set("page", String(options.page));
+    if (options.perPage !== void 0 && options.perPage !== null) qs2.set("per_page", String(options.perPage));
+    if (options.cursor !== void 0 && options.cursor !== null && options.cursor !== "") qs2.set("cursor", String(options.cursor));
+    if (options.limit !== void 0 && options.limit !== null) qs2.set("limit", String(options.limit));
     const res = await this.#request(`/plugins?${qs2}`);
     return { source: res.source, catalogRevision: res.data.catalogRevision, count: res.data.count, page: res.data.page, categories: res.data.categories, items: res.data.items.map(validateCatalogItem) };
   }
@@ -228,8 +240,8 @@ function parseListQuery(url) {
     const limit = Math.min(100, Math.max(1, parseInt(rawLimit || "50", 10) || 50));
     return { q: q2 || void 0, category, platform, sort, order, cursor, limit };
   }
-  const page = parseInt(url.searchParams.get("page") || "1", 10) || 1;
-  const perPage = parseInt(url.searchParams.get("per_page") || "50", 10) || 50;
+  const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10) || 1);
+  const perPage = Math.min(100, Math.max(1, parseInt(url.searchParams.get("per_page") || "50", 10) || 50));
   return { q: q2 || void 0, category, platform, sort, order, page, perPage };
 }
 function createCatalogHandler(catalog) {
@@ -247,7 +259,12 @@ function createCatalogHandler(catalog) {
       }
       const m2 = url.pathname.match(/^\/cordis-mp\/plugin\/([^/]+)$/);
       if (m2) {
-        const slug = decodeURIComponent(m2[1]);
+        let slug;
+        try {
+          slug = decodeURIComponent(m2[1]);
+        } catch {
+          return json(res, 400, { error: { code: "BAD_SLUG", message: "slug is not valid URL encoding" } });
+        }
         const detail = await catalog.detail(slug);
         return json(res, 200, { ok: true, plugin: detail });
       }
@@ -273,7 +290,7 @@ function mountCatalogRoutes(webServer, catalog) {
 
 // packages/install-core/src/install-service.mjs
 import { readFileSync as readFileSync5, existsSync as existsSync5 } from "node:fs";
-import { join as join4 } from "node:path";
+import { join as join4, resolve } from "node:path";
 
 // packages/journal-core/src/journal.mjs
 import { existsSync as existsSync4, readFileSync as readFileSync4, mkdirSync as mkdirSync3, readdirSync as readdirSync3, statSync as statSync4, copyFileSync } from "node:fs";
@@ -1355,7 +1372,16 @@ var InstallError = class extends Error {
 };
 
 // packages/install-core/src/install-service.mjs
-var TRACKED_FILES = ["package.json", "pnpm-lock.yaml", "cordis.patch.yml", ".cordis-mp/state.json"];
+var TRACKED_FILES = ["package.json", "pnpm-lock.yaml", "cordis.patch.yml", ".cordis-mp/state.json", ".cordis-mp/pending-activation.json"];
+var PENDING_RELATIVE_PATH = ".cordis-mp/pending-activation.json";
+function sameArtifactSource(left, right) {
+  return ["packageName", "version", "integrity", "tarball", "registry"].every((key) => left?.[key] === right?.[key]);
+}
+function validPendingRecord(item) {
+  const artifact = item?.artifact;
+  const packageFields = ["packageName", "version", "integrity", "tarball", "registry"];
+  return item && typeof item.slug === "string" && item.slug.length > 0 && (item.platform === void 0 || item.platform === "web" || item.platform === "desktop") && typeof item.entryRevision === "string" && item.entryRevision.length > 0 && Array.isArray(item.entryIds) && item.entryIds.every((id) => typeof id === "string" && id.length > 0) && (item.ownedDisables === void 0 || Array.isArray(item.ownedDisables) && item.ownedDisables.every((id) => typeof id === "string" && id.length > 0)) && packageFields.every((field) => typeof artifact?.[field] === "string" && artifact[field].length > 0);
+}
 var InstallService = class {
   constructor({ catalog, journal, packageManager, activation = null, inspect = null, pendingPath = null, lock = null, selfPackageName = null, selfEntryIds = [] }) {
     this.catalog = catalog;
@@ -1371,11 +1397,28 @@ var InstallService = class {
     if (!Array.isArray(selfEntryIds) || selfEntryIds.some((id) => typeof id !== "string" || id.trim().length === 0)) {
       throw new TypeError("InstallService selfEntryIds must be an array of non-empty entry ids");
     }
+    if (!inspect || typeof inspect.inspectArtifact !== "function") {
+      throw new TypeError("InstallService requires an integrity artifact inspector");
+    }
+    if (typeof pendingPath !== "string" || pendingPath.trim().length === 0) {
+      throw new TypeError("InstallService requires a durable pending activation path");
+    }
+    if (typeof this.journal?.profile !== "string" || resolve(pendingPath) !== resolve(this.journal.profile, ".cordis-mp")) {
+      throw new TypeError("InstallService pending activation path must be the profile .cordis-mp directory");
+    }
     this.selfPackageName = selfPackageName?.trim() || null;
     this.selfEntryIds = [...new Set(selfEntryIds.map((id) => id.trim()))];
     if (!this.lock) throw new TypeError("InstallService requires a profile FileLock");
     if (this.journal?.lock !== this.lock) throw new TypeError("InstallService and Journal must share the profile FileLock");
     this.pending = /* @__PURE__ */ new Map();
+  }
+  #assertNotMarketplaceHost(artifact) {
+    if (this.selfPackageName && artifact?.packageName === this.selfPackageName) {
+      throw new InstallError("SELF_INSTALL_FORBIDDEN", "the marketplace host cannot install its own package");
+    }
+    if (Array.isArray(artifact?.entryIds) && artifact.entryIds.some((id) => this.selfEntryIds.includes(id))) {
+      throw new InstallError("HOST_ENTRY_CONFLICT", "a plugin bundle cannot replace the marketplace host entry");
+    }
   }
   async #withProfileLock(operation) {
     try {
@@ -1387,15 +1430,20 @@ var InstallService = class {
     }
   }
   async install({ slug, platform = "web", confirmation = {}, signal } = {}) {
-    const fresh = await this.catalog.fetchFresh(slug);
-    if (confirmation.entryRevision && fresh.entryRevision !== confirmation.entryRevision) {
+    if (typeof confirmation.entryRevision !== "string" || confirmation.entryRevision.length === 0) {
+      throw new InstallError("CONFIRMATION_REQUIRED", "catalog entry revision confirmation is required");
+    }
+    let fresh;
+    try {
+      fresh = await this.catalog.fetchFresh(slug);
+    } catch {
+      throw new InstallError("CATALOG_RECHECK_FAILED", "catalog must be reachable before installation");
+    }
+    if (fresh.entryRevision !== confirmation.entryRevision) {
       throw new InstallError("STALE_CONFIRMATION", "catalog entry changed; please review again");
     }
     const decision = this.catalog.installability(fresh, platform);
     if (!decision.installable) throw new InstallError("NOT_INSTALLABLE", decision.reason);
-    if (this.selfPackageName && fresh.source?.packageName === this.selfPackageName) {
-      throw new InstallError("SELF_INSTALL_FORBIDDEN", "the marketplace host cannot install its own package");
-    }
     const artifact = {
       packageName: fresh.source.packageName,
       version: fresh.source.version,
@@ -1403,20 +1451,24 @@ var InstallService = class {
       tarball: fresh.source.tarball,
       registry: fresh.source.registry
     };
+    this.#assertNotMarketplaceHost(artifact);
     let stagedPath = null;
     try {
-      if (this.inspect) {
-        const inspected = await this.inspect.inspectArtifact(artifact);
-        const inspectedIds = inspected?.entryIds;
-        artifact.entryIds = Array.isArray(inspectedIds) && inspectedIds.length > 0 ? inspectedIds : Array.isArray(fresh.entryIds) ? fresh.entryIds : [];
-        stagedPath = inspected?.stagedPath || null;
-      } else {
-        artifact.entryIds = fresh.entryIds || [];
+      let inspected;
+      try {
+        inspected = await this.inspect.inspectArtifact(artifact);
+      } catch (e) {
+        const diagnostic = typeof e?.code === "string" && e.code.length > 0 ? e.code : "FAILED";
+        throw new InstallError("INSPECT_FAILED", "artifact inspection failed: " + diagnostic);
       }
-      if (artifact.entryIds.some((id) => this.selfEntryIds.includes(id))) {
-        throw new InstallError("HOST_ENTRY_CONFLICT", "a plugin bundle cannot replace the marketplace host entry");
+      stagedPath = typeof inspected?.stagedPath === "string" ? inspected.stagedPath : null;
+      if (inspected?.packageName !== artifact.packageName || inspected?.version !== artifact.version || inspected?.hasBundlePatch !== true) {
+        throw new InstallError("INSPECT_MISMATCH", "inspected package identity or DSH bundle does not match the catalog artifact");
       }
+      artifact.entryIds = Array.isArray(inspected.entryIds) ? inspected.entryIds : [];
+      this.#assertNotMarketplaceHost(artifact);
       return await this.#withProfileLock(async () => {
+        if (this.pending.has(slug)) throw new InstallError("PENDING_ACTIVATION_EXISTS", "plugin already awaits explicit activation: " + slug);
         const tx = await this.journal.begin(TRACKED_FILES);
         let disable = null;
         let disableApplied = false;
@@ -1437,7 +1489,21 @@ var InstallService = class {
           }
           const verified = await this.packageManager.verifyInstalled(artifact);
           if (!verified) throw new InstallError("VERIFY_FAILED", "installed package does not match verified artifact");
+          const pending = {
+            v: 1,
+            slug,
+            platform,
+            artifact,
+            entryIds: disable?.entryIds || [],
+            ownedDisables: disable?.ownedDisables || [],
+            entryRevision: fresh.entryRevision,
+            tx,
+            createdAt: Date.now()
+          };
+          await this.#persistPendingInTransaction(tx, pending);
           await this.journal.commitFiles(tx);
+          this.pending.set(slug, pending);
+          return { status: "COMMITTED", pendingActivation: true, pending };
         } catch (e) {
           if (e.code === "FP_INJECTED") throw e;
           if (disableApplied && disable?.entryIds?.length) {
@@ -1452,10 +1518,6 @@ var InstallService = class {
           }
           throw e;
         }
-        const pending = { v: 1, slug, artifact, entryIds: disable?.entryIds || [], ownedDisables: disable?.ownedDisables || [], entryRevision: fresh.entryRevision, tx, createdAt: Date.now() };
-        this.pending.set(slug, pending);
-        await this.#persistPending();
-        return { status: "COMMITTED", pendingActivation: true, pending };
       });
     } finally {
       if (stagedPath) {
@@ -1471,24 +1533,48 @@ var InstallService = class {
       const pending = this.pending.get(slug);
       if (!pending) throw new InstallError("NO_PENDING_ACTIVATION", "no pending activation for slug: " + slug);
       if (!this.activation) throw new InstallError("NO_ACTIVATION_PORT", "activation port is not configured");
+      let fresh;
+      try {
+        fresh = await this.catalog.fetchFresh(slug);
+      } catch {
+        throw new InstallError("CATALOG_RECHECK_FAILED", "catalog must be reachable before activation");
+      }
+      const decision = this.catalog.installability(fresh, pending.platform || "web");
+      if (!decision.installable) throw new InstallError("NOT_INSTALLABLE", decision.reason);
+      if (fresh.entryRevision !== pending.entryRevision || !sameArtifactSource(fresh.source, pending.artifact)) {
+        throw new InstallError("STALE_CONFIRMATION", "catalog entry changed; reinstall after reviewing the latest revision");
+      }
+      this.#assertNotMarketplaceHost({ ...pending.artifact, entryIds: pending.entryIds });
+      let verified = false;
+      try {
+        verified = await this.packageManager.verifyInstalled(pending.artifact);
+      } catch {
+      }
+      if (!verified) throw new InstallError("VERIFY_FAILED", "installed package no longer matches the verified artifact");
       let activationStatus = null;
       if (pending.entryIds.length) activationStatus = await this.activation.activate(pending.entryIds, { ownedSet: pending.ownedDisables });
       this.pending.delete(slug);
-      await this.#persistPending();
+      try {
+        await this.#persistPending();
+      } catch (e) {
+        this.pending.set(slug, pending);
+        throw e;
+      }
       return { status: "ACTIVE", activationStatus };
     });
   }
   #pendingFile() {
-    if (!this.pendingPath) return null;
     return join4(this.pendingPath, "pending-activation.json");
   }
+  async #persistPendingInTransaction(tx, pending) {
+    const snapshot = { v: 1, items: [...this.pending.values(), pending] };
+    await this.journal.writePresent(tx, PENDING_RELATIVE_PATH, Buffer.from(JSON.stringify(snapshot)));
+  }
   async #persistPending() {
-    const p2 = this.#pendingFile();
-    if (!p2) return;
     const snapshot = { v: 1, items: [...this.pending.values()] };
-    const tx = await this.journal.begin([".cordis-mp/pending-activation.json"]);
+    const tx = await this.journal.begin([PENDING_RELATIVE_PATH]);
     try {
-      await this.journal.writePresent(tx, ".cordis-mp/pending-activation.json", Buffer.from(JSON.stringify(snapshot)));
+      await this.journal.writePresent(tx, PENDING_RELATIVE_PATH, Buffer.from(JSON.stringify(snapshot)));
       await this.journal.commitFiles(tx);
     } catch (e) {
       try {
@@ -1499,23 +1585,45 @@ var InstallService = class {
       throw e;
     }
   }
+  pendingStatus() {
+    return [...this.pending.values()].map(({ slug, entryRevision, createdAt }) => ({ slug, entryRevision, createdAt }));
+  }
   async recoverPending() {
     const p2 = this.#pendingFile();
-    if (!p2 || !existsSync5(p2)) return 0;
+    if (!existsSync5(p2)) return 0;
     try {
       const data = JSON.parse(readFileSync5(p2, "utf8"));
-      const list = data?.v === 1 ? Array.isArray(data.items) ? data.items : data.slug ? [data] : [] : [];
-      for (const item of list) if (item?.slug) this.pending.set(item.slug, item);
+      const list = data?.v === 1 ? Array.isArray(data.items) ? data.items : data.slug ? [data] : null : null;
+      const slugs = new Set(list?.map((item) => item?.slug));
+      if (!list || list.some((item) => !validPendingRecord(item)) || slugs.size !== list.length) {
+        throw new Error("pending activation state has an invalid schema");
+      }
+      this.pending.clear();
+      for (const item of list) {
+        this.pending.set(item.slug, {
+          ...item,
+          platform: item.platform || "web",
+          ownedDisables: item.ownedDisables || []
+        });
+      }
       return list.length;
     } catch {
-      return 0;
+      throw new InstallError("PENDING_STATE_INVALID", "pending activation state is invalid; recovery is required before mutations");
     }
   }
   async uninstall({ packageName, signal } = {}) {
+    if (typeof packageName !== "string" || packageName.trim().length === 0) throw new InstallError("BAD_PACKAGE_NAME", "package name is required");
+    const normalizedPackageName = packageName.trim();
+    if (this.selfPackageName && normalizedPackageName === this.selfPackageName) {
+      throw new InstallError("SELF_UNINSTALL_FORBIDDEN", "the marketplace host cannot uninstall its own package");
+    }
     return this.#withProfileLock(async () => {
+      if ([...this.pending.values()].some((pending) => pending.artifact.packageName === normalizedPackageName)) {
+        throw new InstallError("PENDING_ACTIVATION_EXISTS", "plugin awaits explicit activation and cannot be uninstalled yet: " + normalizedPackageName);
+      }
       const tx = await this.journal.begin(TRACKED_FILES);
       try {
-        const result = await this.packageManager.remove(packageName, signal);
+        const result = await this.packageManager.remove(normalizedPackageName, signal);
         if (result.exitCode !== 0) throw new InstallError("REMOVE_FAILED", result.stderr || `exit ${result.exitCode}`);
         for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
           await this.journal.adoptExternal(tx, rel, bytes);
@@ -1540,33 +1648,50 @@ function json2(res, status, body) {
   res.end(JSON.stringify(body));
 }
 function readJsonBody(req, limit = 64 * 1024) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     let size = 0;
+    let settled = false;
     const chunks = [];
+    const fail = (error) => {
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    };
     req.on("data", (c) => {
+      if (settled) return;
       size += c.length;
       if (size > limit) {
-        reject(Object.assign(new Error("body too large"), { code: "BODY_TOO_LARGE" }));
-        req.destroy();
+        fail(Object.assign(new Error("body too large"), { code: "BODY_TOO_LARGE" }));
+        req.resume();
         return;
       }
       chunks.push(c);
     });
     req.on("end", () => {
-      if (!chunks.length) return resolve({});
+      if (settled) return;
+      if (!chunks.length) {
+        settled = true;
+        return resolve2({});
+      }
       try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      } catch (e) {
-        reject(Object.assign(new Error("invalid JSON body"), { code: "BAD_JSON" }));
+        const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        settled = true;
+        resolve2(body);
+      } catch {
+        fail(Object.assign(new Error("invalid JSON body"), { code: "BAD_JSON" }));
       }
     });
-    req.on("error", reject);
+    req.on("error", fail);
   });
 }
 function createMutationHandler({ installService, platform = "web", guard = null }) {
   return async (req, res) => {
     const url = new URL(req.url || "/", "http://127.0.0.1");
-    if (url.pathname === "/cordis-mp/status" && req.method === "GET") return json2(res, 200, { ok: true, busy: false });
+    if (url.pathname === "/cordis-mp/status" && req.method === "GET") {
+      const pending = typeof installService.pendingStatus === "function" ? installService.pendingStatus() : [];
+      return json2(res, 200, { ok: true, busy: false, pending });
+    }
     if (req.method !== "POST") {
       res.writeHead(405, { allow: "POST" });
       res.end();
@@ -1595,7 +1720,7 @@ function createMutationHandler({ installService, platform = "web", guard = null 
       json2(res, 404, { error: { code: "NOT_FOUND", message: "no such route" } });
     } catch (e) {
       if (e instanceof InstallError) {
-        const status = ["MUTATION_BUSY", "MUTATION_FENCED", "SELF_INSTALL_FORBIDDEN", "HOST_ENTRY_CONFLICT"].includes(e.code) ? 409 : 400;
+        const status = ["MUTATION_BUSY", "MUTATION_FENCED", "SELF_INSTALL_FORBIDDEN", "SELF_UNINSTALL_FORBIDDEN", "HOST_ENTRY_CONFLICT", "PENDING_ACTIVATION_EXISTS"].includes(e.code) ? 409 : e.code === "CATALOG_RECHECK_FAILED" ? 503 : 400;
         return json2(res, status, { error: { code: e.code, message: e.message } });
       }
       if (e.code === "BAD_JSON" || e.code === "BODY_TOO_LARGE") return json2(res, 400, { error: { code: e.code, message: e.message } });
@@ -1708,11 +1833,13 @@ function mountSessionRoute(webServer, guard = new MutationGuard()) {
 // packages/dsh-runner/src/runner.mjs
 import { spawn } from "node:child_process";
 var DshRunner = class {
-  constructor({ dshBin = "dsh", dshHome = process.env.DSH_HOME, profile = "web", timeoutMs = 15 * 60 * 1e3 } = {}) {
+  constructor({ dshBin = "dsh", dshHome = process.env.DSH_HOME, profile = "web", timeoutMs = 15 * 60 * 1e3, spawnImpl = spawn } = {}) {
+    if (typeof spawnImpl !== "function") throw new TypeError("DshRunner spawnImpl must be a function");
     this.dshBin = dshBin;
     this.dshHome = dshHome;
     this.profile = profile;
     this.timeoutMs = timeoutMs;
+    this.spawnImpl = spawnImpl;
     this.active = null;
   }
   pluginArgs(profile) {
@@ -1725,7 +1852,12 @@ var DshRunner = class {
   }
   run(args, { signal } = {}) {
     if (this.active) return Promise.resolve({ exitCode: 409, timedOut: false, stdout: "", stderr: "another dsh operation is already running", cancelled: false, busy: true });
-    const child = spawn(this.dshBin, args, { env: this.#env(), stdio: ["ignore", "pipe", "pipe"], shell: false, detached: process.platform !== "win32" });
+    let child;
+    try {
+      child = this.spawnImpl(this.dshBin, args, { env: this.#env(), stdio: ["ignore", "pipe", "pipe"], shell: false, detached: process.platform !== "win32" });
+    } catch (err) {
+      return Promise.resolve({ exitCode: 127, timedOut: false, stdout: "", stderr: String(err?.message || err), cancelled: false });
+    }
     this.active = child;
     let stdout = "", stderr = "", timedOut = false, cancelled = false;
     const timer = setTimeout(() => {
@@ -1738,21 +1870,25 @@ var DshRunner = class {
       cancelled = true;
       this.cancel();
     };
-    signal?.addEventListener("abort", onAbort, { once: true });
-    return new Promise((resolve) => {
-      child.on("error", (err) => {
+    return new Promise((resolve2) => {
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
-        this.active = null;
-        resolve({ exitCode: 127, timedOut, stdout, stderr: `${stderr}
+        if (this.active === child) this.active = null;
+        resolve2(result);
+      };
+      child.on("error", (err) => {
+        finish({ exitCode: 127, timedOut, stdout, stderr: `${stderr}
 ${err.message}`, cancelled });
       });
       child.on("close", (code) => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
-        this.active = null;
-        resolve({ exitCode: code, timedOut, stdout, stderr, cancelled });
+        finish({ exitCode: code, timedOut, stdout, stderr, cancelled });
       });
+      if (signal?.aborted) onAbort();
+      else signal?.addEventListener("abort", onAbort, { once: true });
     });
   }
   cancel() {
@@ -1836,6 +1972,10 @@ function pnpmLockRecords(lockfile, artifact) {
       current.resolutionIndent = 4;
       continue;
     }
+    if (/^ {4}[^\s].*?:\s*(?:#.*)?$/.test(line)) {
+      current.resolutionIndent = null;
+      continue;
+    }
     if (current.resolutionIndent === 4) {
       const nestedIntegrity = /^ {6}integrity:\s*(.*?)\s*(?:#.*)?$/.exec(line);
       if (nestedIntegrity) current.integrity = unquoteYamlScalar(nestedIntegrity[1]);
@@ -1873,11 +2013,11 @@ var DshPackageManagerPort = class {
     return files;
   }
   async installVerifiedArtifact(artifact, signal) {
-    const result = await this.runner.run([...this.runner.pluginArgs(), "add", this.#spec(artifact), "--ignore-scripts"], { signal });
+    const result = await this.runner.run([...this.runner.pluginArgs(), "add", "--ignore-scripts", "--", this.#spec(artifact)], { signal });
     return { ...result, profileFiles: result.exitCode === 0 ? this.#profileFiles() : {} };
   }
   async remove(packageName, signal) {
-    const result = await this.runner.run([...this.runner.pluginArgs(), "remove", packageName], { signal });
+    const result = await this.runner.run([...this.runner.pluginArgs(), "remove", "--", packageName], { signal });
     return { ...result, profileFiles: result.exitCode === 0 ? this.#profileFiles() : {} };
   }
   async verifyInstalled(artifact) {
@@ -5006,6 +5146,7 @@ var InspectError = class extends Error {
     this.code = code;
   }
 };
+var BAD_TAR_PATH = /(^|\/)\.\.(\/|$)|^\/|\\/;
 function parsePatchIds(text) {
   const ids = [];
   const seen = /* @__PURE__ */ new Set();
@@ -5019,48 +5160,9 @@ function parsePatchIds(text) {
   return ids;
 }
 async function inspectTarball(file, { maxEntryBytes = 4 * 1024 * 1024, maxEntries = 4096 } = {}) {
-  let pkgText = null, patchText = null, entries = 0, fail = null;
-  const badPath = /(^|\/)\.\.(\/|$)|^\/|\\/;
-  await Ct({
-    file,
-    onReadEntry(entry) {
-      if (fail) return;
-      try {
-        entries++;
-        if (entries > maxEntries) {
-          fail = new InspectError("TOO_MANY_ENTRIES", "tar has too many entries");
-          return;
-        }
-        if (badPath.test(entry.path)) {
-          fail = new InspectError("BAD_PATH", "unsafe tar path: " + entry.path);
-          return;
-        }
-        const size = Number(entry.size || 0);
-        if (size > maxEntryBytes) {
-          fail = new InspectError("ENTRY_TOO_LARGE", "tar entry too large: " + entry.path);
-          return;
-        }
-      } catch (e) {
-        fail = e;
-        return;
-      }
-      const wanted = entry.path === "package/package.json" || entry.path === "package/cordis.patch.yml";
-      if (!wanted) return;
-      const chunks = [];
-      entry.on("data", (c) => {
-        if (fail) return;
-        chunks.push(c);
-        if (chunks.reduce((n, b2) => n + b2.length, 0) > maxEntryBytes) fail = new InspectError("ENTRY_TOO_LARGE", "entry exceeded limit while reading");
-      });
-      entry.on("end", () => {
-        if (fail) return;
-        const text = Buffer.concat(chunks).toString("utf8");
-        if (entry.path === "package/package.json") pkgText = text;
-        else patchText = text;
-      });
-    }
-  });
-  if (fail) throw fail;
+  const manifestPath = "package/package.json";
+  const manifestEntries = await readTarEntries(file, /* @__PURE__ */ new Set([manifestPath]), { maxEntryBytes, maxEntries });
+  const pkgText = manifestEntries.get(manifestPath);
   if (!pkgText) throw new InspectError("BAD_MANIFEST", "package/package.json not found in tarball");
   let pkg;
   try {
@@ -5068,12 +5170,74 @@ async function inspectTarball(file, { maxEntryBytes = 4 * 1024 * 1024, maxEntrie
   } catch {
     throw new InspectError("BAD_MANIFEST", "package.json is invalid JSON");
   }
-  return normalizeInspect(pkg, patchText);
+  const bundlePatch = declaredBundlePatch(pkg);
+  let patchText = null;
+  if (bundlePatch) {
+    const patchPath = `package/${bundlePatch}`;
+    patchText = (await readTarEntries(file, /* @__PURE__ */ new Set([patchPath]), { maxEntryBytes, maxEntries })).get(patchPath) || null;
+  }
+  return normalizeInspect(pkg, patchText, bundlePatch);
 }
-function normalizeInspect(pkg, patchText) {
+function declaredBundlePatch(pkg) {
+  const declared = pkg?.dsh?.bundle?.patch;
+  if (declared === void 0 || declared === null) return null;
+  if (typeof declared !== "string") throw new InspectError("BAD_BUNDLE_PATCH", "dsh.bundle.patch must be a relative file path");
+  const segments = declared.trim().split("/");
+  if (segments[0] === ".") segments.shift();
+  if (!segments.length || segments.some((segment) => !segment || segment === "." || segment === ".." || segment.includes("\\"))) {
+    throw new InspectError("BAD_BUNDLE_PATCH", "dsh.bundle.patch must be a safe relative file path");
+  }
+  const path = segments.join("/");
+  if (Buffer.byteLength(path) > 1024) throw new InspectError("BAD_BUNDLE_PATCH", "dsh.bundle.patch is too long");
+  return path;
+}
+async function readTarEntries(file, wantedPaths, { maxEntryBytes, maxEntries }) {
+  const texts = /* @__PURE__ */ new Map();
+  const seen = /* @__PURE__ */ new Set();
+  let entries = 0;
+  let fail = null;
+  await Ct({
+    file,
+    onReadEntry(entry) {
+      if (fail) {
+        entry.resume();
+        return;
+      }
+      try {
+        entries++;
+        if (entries > maxEntries) throw new InspectError("TOO_MANY_ENTRIES", "tar has too many entries");
+        if (BAD_TAR_PATH.test(entry.path)) throw new InspectError("BAD_PATH", "unsafe tar path: " + entry.path);
+        const size = Number(entry.size || 0);
+        if (size > maxEntryBytes) throw new InspectError("ENTRY_TOO_LARGE", "tar entry too large: " + entry.path);
+        if (!wantedPaths.has(entry.path)) return;
+        if (seen.has(entry.path)) throw new InspectError("DUPLICATE_ENTRY", "duplicate tar entry: " + entry.path);
+        seen.add(entry.path);
+      } catch (e) {
+        fail = e;
+        entry.resume();
+        return;
+      }
+      const chunks = [];
+      let bytes = 0;
+      entry.on("data", (c) => {
+        if (fail) return;
+        bytes += c.length;
+        chunks.push(c);
+        if (bytes > maxEntryBytes) fail = new InspectError("ENTRY_TOO_LARGE", "entry exceeded limit while reading");
+      });
+      entry.on("end", () => {
+        if (fail) return;
+        texts.set(entry.path, Buffer.concat(chunks).toString("utf8"));
+      });
+    }
+  });
+  if (fail) throw fail;
+  return texts;
+}
+function normalizeInspect(pkg, patchText, bundlePatch) {
   const dsh = pkg.dsh || {};
   const platforms = Array.isArray(dsh.platforms) ? dsh.platforms : ["unknown"];
-  const hasBundlePatch = typeof dsh.bundle?.patch === "string";
+  const hasBundlePatch = bundlePatch !== null && patchText !== null;
   const hasClient = dsh.client !== void 0;
   return {
     packageName: typeof pkg.name === "string" ? pkg.name : null,
@@ -5082,6 +5246,7 @@ function normalizeInspect(pkg, patchText) {
     platforms,
     hasBundlePatch,
     hasClient,
+    bundlePatch,
     patch: patchText
   };
 }
@@ -5091,6 +5256,8 @@ import { mkdtempSync, writeFileSync as writeFileSync3, mkdirSync as mkdirSync5, 
 import { join as join7 } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes as randomBytes6, createHash as createHash2 } from "node:crypto";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 var HttpArtifactInspector = class {
   constructor({ cacheDir = null, fetchImpl = fetch, maxBytes = 128 * 1024 * 1024 } = {}) {
     this.cacheDir = cacheDir;
@@ -5107,59 +5274,39 @@ var HttpArtifactInspector = class {
     const stagedPath = join7(dir, `artifact-${randomBytes6(6).toString("hex")}.tgz`);
     const hash = createHash2("sha512");
     let bytes = 0;
-    if (res.body && typeof res.body.getReader === "function") {
-      const reader = res.body.getReader();
-      const out = createWriteStream(stagedPath, { mode: 384 });
-      let streamError = null;
-      out.on("error", (e) => {
-        streamError = e;
-      });
-      try {
-        for (; ; ) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          bytes += value.byteLength;
-          if (bytes > this.maxBytes) throw new InspectError("ARTIFACT_TOO_LARGE", `tarball exceeds ${this.maxBytes} bytes`);
-          hash.update(value);
-          if (!out.write(value)) await new Promise((r) => out.once("drain", r));
-        }
-      } catch (e) {
-        try {
-          reader.cancel?.();
-        } catch {
-        }
-        out.destroy();
-        try {
-          rmSync3(stagedPath, { force: true });
-        } catch {
-        }
-        throw e;
-      } finally {
-        reader.releaseLock?.();
+    try {
+      if (res.body && typeof res.body.getReader === "function") {
+        const maxBytes = this.maxBytes;
+        const verifier = new Transform({
+          transform(chunk, _encoding, callback) {
+            const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            bytes += data.length;
+            if (bytes > maxBytes) return callback(new InspectError("ARTIFACT_TOO_LARGE", `tarball exceeds ${maxBytes} bytes`));
+            hash.update(data);
+            callback(null, data);
+          }
+        });
+        await pipeline(Readable.fromWeb(res.body), verifier, createWriteStream(stagedPath, { mode: 384 }));
+      } else {
+        const buf = Buffer.from(await res.arrayBuffer());
+        bytes = buf.length;
+        if (bytes > this.maxBytes) throw new InspectError("ARTIFACT_TOO_LARGE", `tarball exceeds ${this.maxBytes} bytes`);
+        hash.update(buf);
+        writeFileSync3(stagedPath, buf, { mode: 384 });
       }
-      out.end();
-      await new Promise((resolve, reject) => {
-        out.once("finish", resolve);
-        out.once("error", reject);
-      });
-      if (streamError) throw streamError;
-    } else {
-      const buf = Buffer.from(await res.arrayBuffer());
-      bytes = buf.length;
-      if (bytes > this.maxBytes) throw new InspectError("ARTIFACT_TOO_LARGE", `tarball exceeds ${this.maxBytes} bytes`);
-      hash.update(buf);
-      writeFileSync3(stagedPath, buf, { mode: 384 });
-    }
-    const actual = "sha512-" + hash.digest("base64");
-    if (actual !== artifact.integrity) {
+      const actual = "sha512-" + hash.digest("base64");
+      if (actual !== artifact.integrity) {
+        throw new InspectError("INTEGRITY_MISMATCH", "tarball sha512 does not match catalog integrity");
+      }
+      const inspected = await inspectTarball(stagedPath);
+      return { ...inspected, stagedPath, bytes };
+    } catch (e) {
       try {
         rmSync3(stagedPath, { force: true });
       } catch {
       }
-      throw new InspectError("INTEGRITY_MISMATCH", `tarball sha512 does not match catalog integrity`);
+      throw e;
     }
-    const inspected = await inspectTarball(stagedPath);
-    return { ...inspected, stagedPath, bytes };
   }
   cleanup(path) {
     try {

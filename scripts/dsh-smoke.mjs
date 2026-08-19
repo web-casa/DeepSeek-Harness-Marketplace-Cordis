@@ -11,7 +11,8 @@ const fixture = fileURLToPath(new URL('../spikes/S1/fixture-server.mjs', import.
 const buildScript = fileURLToPath(new URL('../apps/web/scripts/build.mjs', import.meta.url))
 
 // 1. build + pack
-spawnSync(process.execPath, [buildScript], { stdio: 'inherit' })
+const build = spawnSync(process.execPath, [buildScript], { stdio: 'inherit' })
+if (build.status !== 0) { console.error('build failed'); process.exit(1) }
 const pack = spawnSync(process.execPath, [packScript], { encoding: 'utf8' })
 if (pack.status !== 0) { console.error('pack failed', pack.stderr); process.exit(1) }
 const tgz = pack.stdout.trim().split('\n').pop()
@@ -25,13 +26,25 @@ const add = spawnSync('dsh', ['plugin', '--profile', 'web', 'add', `file:${tgz}`
 console.log('dsh plugin add exit', add.status)
 if (add.status !== 0) { console.error(add.stdout); console.error(add.stderr); process.exit(1) }
 
-const fixtureChild = spawn(process.execPath, [fixture], { stdio: ['ignore', 'pipe', 'pipe'] })
+const children = new Set()
+function track(child) {
+  children.add(child)
+  child.once('exit', () => children.delete(child))
+  return child
+}
+function cleanupChildren() {
+  for (const child of children) { try { child.kill('SIGTERM') } catch {} }
+}
+process.once('exit', cleanupChildren)
+
+const fixtureChild = track(spawn(process.execPath, [fixture], { stdio: ['ignore', 'pipe', 'pipe'] }))
 let fixtureOut = ''; fixtureChild.stdout.on('data', d => fixtureOut += d)
 for (let i = 0; i < 40 && !fixtureOut.includes('\n'); i++) await new Promise(r => setTimeout(r, 50))
 const fixturePort = fixtureOut.trim().split('\n')[0]
+if (!/^\d+$/.test(fixturePort)) { console.error('fixture did not start'); process.exit(1) }
 
 const webEnv = { ...env, CORDIS_RUN_API: `http://127.0.0.1:${fixturePort}/api/v1` }
-const web = spawn('dsh', ['web', '--port', '0'], { env: webEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+const web = track(spawn('dsh', ['web', '--port', '0'], { env: webEnv, stdio: ['ignore', 'pipe', 'pipe'] }))
 let out = '', err = ''; web.stdout.on('data', d => out += d); web.stderr.on('data', d => err += d)
 let port = null
 for (let i = 0; i < 120 && !port; i++) {

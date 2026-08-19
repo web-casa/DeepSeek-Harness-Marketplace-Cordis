@@ -17,7 +17,7 @@ function setup({ blocked = false } = {}) {
     description: { zh: 'P', en: 'P' }, category: 'c', homepage: null,
     platforms: ['web'], engines: { dsh: '>=0.1.0-rc.6 <0.2.0' }, stars: 0,
     blocked, deprecated: false, replacementSlug: null, installHint: null,
-    source: { type: 'npm', packageName: 'p', version: '1.0.0', integrity: 'sha512-AAAA', registry: 'https://registry.npmjs.org', tarball: null },
+    source: { type: 'npm', packageName: 'p', version: '1.0.0', integrity: 'sha512-AAAA', registry: 'https://registry.npmjs.org', tarball: 'https://registry.npmjs.org/p/-/p-1.0.0.tgz' },
     versions: [], screenshots: [],
   }
   const catalog = {
@@ -32,8 +32,14 @@ function setup({ blocked = false } = {}) {
   }
   const lock = new FileLock(journalRoot)
   const journal = new Journal({ journalRoot, profileRoot: profile, lock })
-  const service = new InstallService({ catalog, journal, packageManager, pendingPath: join(profile, '.cordis-mp'), lock })
-  return { base, profile, journalRoot, lock, journal, service, catalog, packageManager, fresh }
+  const pendingPath = join(profile, '.cordis-mp')
+  const inspect = {
+    async inspectArtifact(artifact) {
+      return { packageName: artifact.packageName, version: artifact.version, hasBundlePatch: true, entryIds: ['p'] }
+    },
+  }
+  const service = new InstallService({ catalog, journal, packageManager, inspect, pendingPath, lock })
+  return { base, profile, journalRoot, lock, journal, service, catalog, packageManager, fresh, inspect, pendingPath }
 }
 
 test('successful install commits profile file transaction', async () => {
@@ -73,8 +79,11 @@ test('a busy profile lock is reported without starting a package mutation', asyn
 
 test('InstallService refuses a missing or mismatched profile lock', () => {
   const c = setup()
-  assert.throws(() => new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager }), /requires a profile FileLock/)
-  assert.throws(() => new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, lock: new FileLock(c.journalRoot) }), /must share the profile FileLock/)
+  assert.throws(() => new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, inspect: c.inspect, pendingPath: c.pendingPath }), /requires a profile FileLock/)
+  assert.throws(() => new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, inspect: c.inspect, pendingPath: c.pendingPath, lock: new FileLock(c.journalRoot) }), /must share the profile FileLock/)
+  assert.throws(() => new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, pendingPath: c.pendingPath, lock: c.lock }), /requires an integrity artifact inspector/)
+  assert.throws(() => new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, inspect: c.inspect, lock: c.lock }), /requires a durable pending activation path/)
+  assert.throws(() => new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, inspect: c.inspect, pendingPath: c.profile, lock: c.lock }), /must be the profile .cordis-mp directory/)
 })
 
 test('stale confirmation is rejected before package manager runs', async () => {
@@ -83,6 +92,50 @@ test('stale confirmation is rejected before package manager runs', async () => {
   c.packageManager.installVerifiedArtifact = async () => { called = true }
   await assert.rejects(() => c.service.install({ slug: 'p', confirmation: { entryRevision: 'old' } }), e => e.code === 'STALE_CONFIRMATION')
   assert.equal(called, false)
+})
+
+test('missing confirmation is rejected before the fresh catalog lookup', async () => {
+  const c = setup()
+  let fetched = false
+  c.catalog.fetchFresh = async () => { fetched = true; throw new Error('must not fetch') }
+  await assert.rejects(() => c.service.install({ slug: 'p' }), e => e.code === 'CONFIRMATION_REQUIRED')
+  assert.equal(fetched, false)
+})
+
+test('unreachable fresh catalog fails closed before inspection or mutation', async () => {
+  const c = setup()
+  let inspected = false
+  let installed = false
+  c.catalog.fetchFresh = async () => { throw new Error('offline') }
+  c.inspect.inspectArtifact = async () => { inspected = true; throw new Error('must not inspect') }
+  c.packageManager.installVerifiedArtifact = async () => { installed = true; return { exitCode: 0, profileFiles: {} } }
+  await assert.rejects(() => c.service.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } }), e => e.code === 'CATALOG_RECHECK_FAILED')
+  assert.equal(inspected, false)
+  assert.equal(installed, false)
+})
+
+test('artifact inspection failures are fail-closed install diagnostics', async () => {
+  const c = setup()
+  let installed = false
+  c.inspect.inspectArtifact = async () => { throw Object.assign(new Error('integrity mismatch'), { code: 'INTEGRITY_MISMATCH' }) }
+  c.packageManager.installVerifiedArtifact = async () => { installed = true; return { exitCode: 0, profileFiles: {} } }
+  await assert.rejects(() => c.service.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } }), e => e.code === 'INSPECT_FAILED' && /INTEGRITY_MISMATCH/.test(e.message))
+  assert.equal(installed, false)
+})
+
+test('inspection identity mismatch is cleaned and rejects before journal or package mutation', async () => {
+  const c = setup()
+  let cleaned = false
+  let journalStarted = false
+  let installed = false
+  c.inspect.inspectArtifact = async () => ({ packageName: 'other', version: '1.0.0', hasBundlePatch: true, entryIds: ['p'], stagedPath: '/tmp/mismatch-artifact' })
+  c.inspect.cleanup = path => { assert.equal(path, '/tmp/mismatch-artifact'); cleaned = true }
+  c.journal.begin = async () => { journalStarted = true; throw new Error('journal must not start') }
+  c.packageManager.installVerifiedArtifact = async () => { installed = true; return { exitCode: 0, profileFiles: {} } }
+  await assert.rejects(() => c.service.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } }), e => e.code === 'INSPECT_MISMATCH')
+  assert.equal(cleaned, true)
+  assert.equal(journalStarted, false)
+  assert.equal(installed, false)
 })
 
 test('blocked entry is not installable', async () => {
@@ -103,7 +156,7 @@ test('marketplace host rejects its own package before inspect, pre-disable, jour
     async cancelDisable() {},
     async activate() {},
   }
-  const inspect = { async inspectArtifact() { inspected = true; return { entryIds: ['p'] } } }
+  const inspect = { async inspectArtifact() { inspected = true; return { packageName: 'p', version: '1.0.0', hasBundlePatch: true, entryIds: ['p'] } } }
   c.journal.begin = async () => { journalStarted = true; throw new Error('journal must not start') }
   const service = new InstallService({
     catalog: c.catalog,
@@ -114,6 +167,7 @@ test('marketplace host rejects its own package before inspect, pre-disable, jour
     },
     activation,
     inspect,
+    pendingPath: c.pendingPath,
     lock: c.lock,
     selfPackageName: 'p',
   })
@@ -147,7 +201,7 @@ test('a foreign bundle cannot pre-disable the marketplace host entry and its sta
     async activate() {},
   }
   const inspect = {
-    async inspectArtifact() { inspected = true; return { entryIds: ['cordis-mp'], stagedPath: '/tmp/foreign-artifact' } },
+    async inspectArtifact() { inspected = true; return { packageName: 'foreign-package', version: '1.0.0', hasBundlePatch: true, entryIds: ['cordis-mp'], stagedPath: '/tmp/foreign-artifact' } },
     cleanup(path) { assert.equal(path, '/tmp/foreign-artifact'); cleaned = true },
   }
   const service = new InstallService({
@@ -159,6 +213,7 @@ test('a foreign bundle cannot pre-disable the marketplace host entry and its sta
     },
     activation,
     inspect,
+    pendingPath: c.pendingPath,
     lock: c.lock,
     selfPackageName: '@webcasa/web',
     selfEntryIds: ['cordis-mp'],
@@ -191,6 +246,19 @@ test('verify failure rolls back written profile files', async () => {
   assert.equal(readFileSync(join(c.profile, 'package.json'), 'utf8'), '{"old":true}')
 })
 
+test('pending activation is written in the install transaction, not a second transaction', async () => {
+  const c = setup()
+  let began = 0
+  const begin = c.journal.begin.bind(c.journal)
+  c.journal.begin = async targets => { began++; return begin(targets) }
+  await c.service.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } })
+  assert.equal(began, 1)
+  const pending = JSON.parse(readFileSync(join(c.pendingPath, 'pending-activation.json'), 'utf8'))
+  assert.equal(pending.v, 1)
+  assert.equal(pending.items.length, 1)
+  assert.equal(pending.items[0].slug, 'p')
+})
+
 test('M2b: pre-disable happens before install; activation is pending', async () => {
   const c = setup()
   const order = []
@@ -201,7 +269,7 @@ test('M2b: pre-disable happens before install; activation is pending', async () 
     async cancelDisable() { order.push('cancel') },
     async activate() { order.push('activate'); return { status: 'ACTIVE' } },
   }
-  const svc = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation, lock: c.lock })
+  const svc = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation, inspect: c.inspect, pendingPath: c.pendingPath, lock: c.lock })
   const out = await svc.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } })
   assert.equal(out.pendingActivation, true)
   assert.deepEqual(order.slice(0, 3), ['prepare', 'pre-disable', 'install'])
@@ -220,7 +288,7 @@ test('M2b: failed install cancels pre-disable', async () => {
     async cancelDisable() { cancelled = true },
     async activate() {},
   }
-  const svc = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation, lock: c.lock })
+  const svc = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation, inspect: c.inspect, pendingPath: c.pendingPath, lock: c.lock })
   await assert.rejects(() => svc.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } }), e => e.code === 'INSTALL_FAILED')
   assert.equal(cancelled, true)
 })
@@ -237,22 +305,102 @@ test('R1: inspect provides entryIds to pre-disable', async () => {
     async prepareDisable({ artifact }) { seen = artifact.entryIds; return { entryIds: artifact.entryIds } },
     async preDisable() {}, async cancelDisable() {}, async activate() {},
   }
-  const inspect = { async inspectArtifact() { return { entryIds: ['inspect-entry'] } } }
-  const svc = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation, inspect, lock: c.lock })
+  const inspect = { async inspectArtifact() { return { packageName: 'p', version: '1.0.0', hasBundlePatch: true, entryIds: ['inspect-entry'] } } }
+  const svc = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation, inspect, pendingPath: c.pendingPath, lock: c.lock })
   await svc.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } })
   assert.deepEqual(seen, ['inspect-entry'])
+})
+
+test('R1: only inspected entryIds can pre-disable the user patch layer', async () => {
+  const c = setup()
+  c.fresh.entryIds = ['catalog-only']
+  let seen
+  const activation = {
+    async prepareDisable({ artifact }) { seen = artifact.entryIds; return { entryIds: artifact.entryIds } },
+    async preDisable() { throw new Error('no inspected ids means no pre-disable write') },
+    async cancelDisable() {}, async activate() {},
+  }
+  c.inspect.inspectArtifact = async artifact => ({ packageName: artifact.packageName, version: artifact.version, hasBundlePatch: true, entryIds: [] })
+  const svc = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation, inspect: c.inspect, pendingPath: c.pendingPath, lock: c.lock })
+  const out = await svc.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } })
+  assert.deepEqual(seen, [])
+  assert.deepEqual(out.pending.entryIds, [])
+})
+
+test('activate fails closed when the fresh catalog now blocks the pending artifact', async () => {
+  const c = setup()
+  let activated = false
+  const activation = {
+    async prepareDisable() { return { entryIds: ['p'] } }, async preDisable() {}, async cancelDisable() {},
+    async activate() { activated = true },
+  }
+  const svc = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation, inspect: c.inspect, pendingPath: c.pendingPath, lock: c.lock })
+  await svc.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } })
+  c.fresh.blocked = true
+  await assert.rejects(() => svc.activate({ slug: 'p' }), e => e.code === 'NOT_INSTALLABLE' && /blocked/.test(e.message))
+  assert.equal(activated, false)
+  assert.equal(svc.pendingStatus().length, 1)
+})
+
+test('activate rechecks revision and installed lockfile proof before enabling', async () => {
+  const c = setup()
+  let activated = false
+  const activation = {
+    async prepareDisable() { return { entryIds: ['p'] } }, async preDisable() {}, async cancelDisable() {},
+    async activate() { activated = true },
+  }
+  const svc = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation, inspect: c.inspect, pendingPath: c.pendingPath, lock: c.lock })
+  await svc.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } })
+  c.fresh.entryRevision = 'rev-2'
+  await assert.rejects(() => svc.activate({ slug: 'p' }), e => e.code === 'STALE_CONFIRMATION')
+  c.fresh.entryRevision = 'rev-1'
+  c.packageManager.verifyInstalled = async () => false
+  await assert.rejects(() => svc.activate({ slug: 'p' }), e => e.code === 'VERIFY_FAILED')
+  assert.equal(activated, false)
+  assert.equal(svc.pendingStatus().length, 1)
+})
+
+test('activate fails closed when the fresh catalog cannot be reached', async () => {
+  const c = setup()
+  const activation = { async prepareDisable() { return { entryIds: [] } }, async preDisable() {}, async cancelDisable() {}, async activate() { throw new Error('must not activate') } }
+  const svc = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation, inspect: c.inspect, pendingPath: c.pendingPath, lock: c.lock })
+  await svc.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } })
+  c.catalog.fetchFresh = async () => { throw new Error('offline') }
+  await assert.rejects(() => svc.activate({ slug: 'p' }), e => e.code === 'CATALOG_RECHECK_FAILED')
+  assert.equal(svc.pendingStatus().length, 1)
 })
 
 test('R2: pending activation survives service restart', async () => {
   const c = setup()
   const activation = { async prepareDisable() { return { entryIds: [] } }, async preDisable() {}, async cancelDisable() {}, async activate() { return { status: 'ACTIVE' } } }
-  const svc1 = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation, pendingPath: join(c.profile, '.cordis-mp'), lock: c.lock })
+  const svc1 = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, activation, inspect: c.inspect, pendingPath: join(c.profile, '.cordis-mp'), lock: c.lock })
   await svc1.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } })
   // 模拟进程重启
   const lock2 = new FileLock(c.journalRoot)
   const journal2 = new Journal({ journalRoot: c.journalRoot, profileRoot: c.profile, lock: lock2 })
-  const svc2 = new InstallService({ catalog: c.catalog, journal: journal2, packageManager: c.packageManager, activation, pendingPath: join(c.profile, '.cordis-mp'), lock: lock2 })
+  const svc2 = new InstallService({ catalog: c.catalog, journal: journal2, packageManager: c.packageManager, activation, inspect: c.inspect, pendingPath: join(c.profile, '.cordis-mp'), lock: lock2 })
   assert.equal(await svc2.recoverPending(), 1)
   assert.equal((await svc2.activate({ slug: 'p' })).status, 'ACTIVE')
   assert.deepEqual(JSON.parse(readFileSync(join(c.profile, '.cordis-mp', 'pending-activation.json'), 'utf8')), { v: 1, items: [] })
+})
+
+test('corrupt pending activation state fails closed instead of losing its recovery record', async () => {
+  const c = setup()
+  mkdirSync(c.pendingPath, { recursive: true })
+  writeFileSync(join(c.pendingPath, 'pending-activation.json'), '{not json')
+  const replacement = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, inspect: c.inspect, pendingPath: c.pendingPath, lock: c.lock })
+  await assert.rejects(() => replacement.recoverPending(), e => e.code === 'PENDING_STATE_INVALID')
+})
+
+test('marketplace host and pending packages cannot be uninstalled', async () => {
+  const c = setup()
+  let removed = false
+  c.packageManager.remove = async () => { removed = true; return { exitCode: 0, profileFiles: {} } }
+  const host = new InstallService({ catalog: c.catalog, journal: c.journal, packageManager: c.packageManager, inspect: c.inspect, pendingPath: c.pendingPath, lock: c.lock, selfPackageName: 'p' })
+  await assert.rejects(() => host.uninstall({ packageName: 'p' }), e => e.code === 'SELF_UNINSTALL_FORBIDDEN')
+  assert.equal(removed, false)
+
+  await c.service.install({ slug: 'p', confirmation: { entryRevision: 'rev-1' } })
+  await assert.rejects(() => c.service.uninstall({ packageName: 'p' }), e => e.code === 'PENDING_ACTIVATION_EXISTS')
+  assert.equal(removed, false)
 })

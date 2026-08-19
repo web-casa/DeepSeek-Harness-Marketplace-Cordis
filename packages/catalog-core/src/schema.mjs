@@ -17,13 +17,17 @@ export function normalizeLocalized(value, fallback = '') {
 export function normalizeSource(item) {
   const source = isObject(item.source) ? item.source : null
   const flat = { packageName: item.npm ?? null, version: item.version ?? null, integrity: item.integrity ?? null }
+  // Old flat fields are retained for display-only compatibility.  They do not
+  // establish an install source: v4 mutations must have the complete nested
+  // source evidence supplied by the catalog.
+  const legacy = source === null
   return {
-    type: source?.type ?? (flat.packageName ? 'npm' : null),
-    packageName: source?.packageName ?? flat.packageName,
-    version: source?.version ?? flat.version,
-    integrity: source?.integrity ?? flat.integrity,
-    registry: source?.registry ?? 'https://registry.npmjs.org',
-    tarball: source?.tarball ?? null,
+    type: source?.type ?? null,
+    packageName: source?.packageName ?? (legacy ? flat.packageName : null),
+    version: source?.version ?? (legacy ? flat.version : null),
+    integrity: source?.integrity ?? (legacy ? flat.integrity : null),
+    registry: source?.registry ?? (legacy ? item.registry ?? null : null),
+    tarball: source?.tarball ?? (legacy ? item.tarball ?? null : null),
   }
 }
 
@@ -72,21 +76,28 @@ export function validateCatalogItem(item) {
 
 export function installability(item, platform = 'web') {
   const reasons = []
-  const src = item.source
+  const src = item?.source || {}
   if (src.type !== 'npm') reasons.push('non-npm-source')
   else {
     if (!src.packageName || !NPM_NAME_RE.test(src.packageName)) reasons.push('bad-package-name')
     if (typeof src.version !== 'string' || !/^\d+\.\d+\.\d+/.test(src.version)) reasons.push('bad-version')
     if (typeof src.integrity !== 'string' || !HASH_RE.test(src.integrity)) reasons.push('missing-integrity')
     if (!['https://registry.npmjs.org'].includes(src.registry)) reasons.push('registry-not-allowed')
-    if (src.tarball) {
-      try { if (new URL(src.tarball).hostname !== new URL(src.registry).hostname) reasons.push('tarball-host-mismatch') }
+    if (typeof src.tarball !== 'string' || src.tarball.length === 0) reasons.push('missing-tarball')
+    else {
+      try {
+        const registry = new URL(src.registry)
+        const tarball = new URL(src.tarball)
+        if (tarball.protocol !== registry.protocol || tarball.hostname !== registry.hostname || tarball.port !== registry.port) reasons.push('tarball-origin-mismatch')
+      }
       catch { reasons.push('bad-tarball-url') }
     }
   }
-  if (!item.platforms.includes(platform) && !item.platforms.includes('unknown')) reasons.push(`platform-${item.platforms.join('+')}`)
-  if (item.blocked) reasons.push('blocked')
-  if (item.deprecated) reasons.push('deprecated')
-  if (item.engines?.dsh && !item.engines.dsh.startsWith('>=')) reasons.push('bad-engines-dsh')
+  const platforms = Array.isArray(item?.platforms) ? item.platforms : []
+  if (!platforms.includes(platform)) reasons.push(`platform-${platforms.join('+')}`)
+  if (item?.blocked) reasons.push('blocked')
+  if (item?.deprecated) reasons.push('deprecated')
+  if (typeof item?.entryRevision !== 'string' || item.entryRevision.length === 0) reasons.push('missing-entry-revision')
+  if (typeof item?.engines?.dsh !== 'string' || !item.engines.dsh.startsWith('>=')) reasons.push('bad-engines-dsh')
   return { installable: reasons.length === 0, reasons, reason: reasons.join(',') }
 }

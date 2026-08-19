@@ -41,11 +41,19 @@ test('MarketSection renders search/list chrome', async () => {
   assert.match(html, /搜索/)
   assert.match(html, /第 1 页/)
 
-  const item = { slug: 'demo', name: 'Demo', description: { zh: '中文简介', en: 'English description' }, platforms: ['web', 'desktop'], source: { packageName: 'demo', version: '1.0.0' }, engines: { dsh: '>=0.1.0' } }
+  const item = {
+    slug: 'demo', name: 'Demo', entryRevision: 'demo-rev-1', description: { zh: '中文简介', en: 'English description' }, platforms: ['web', 'desktop'],
+    source: { type: 'npm', packageName: 'demo', version: '1.0.0', integrity: 'sha512-AAAA', registry: 'https://registry.npmjs.org', tarball: 'https://registry.npmjs.org/demo/-/demo-1.0.0.tgz' },
+    engines: { dsh: '>=0.1.0' },
+  }
   const itemHtml = renderToStaticMarkup(React.createElement(MarketItem, { item, pending: false, busy: false, onInstall() {}, onActivate() {}, onDetail() {} }))
   assert.match(itemHtml, /WEB/)
   assert.match(itemHtml, /DESKTOP/)
   assert.match(itemHtml, /详情/)
+  assert.match(itemHtml, /安装/)
+
+  const browseOnlyHtml = renderToStaticMarkup(React.createElement(MarketItem, { item: { ...item, platforms: ['unknown'] }, pending: false, busy: false, onInstall() {}, onActivate() {}, onDetail() {} }))
+  assert.match(browseOnlyHtml, /disabled=""/)
 
   const detailHtml = renderToStaticMarkup(React.createElement(DetailDialog, { item: { ...item, homepage: 'http://homepage.example/demo', screenshots: ['https://cdn.cordis.run/screenshots/demo/1.webp', 'https://untrusted.example/demo.webp'] }, loading: false, error: null, onClose() {} }))
   assert.match(detailHtml, /cdn\.cordis\.run/)

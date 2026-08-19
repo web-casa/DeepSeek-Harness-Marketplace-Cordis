@@ -38,6 +38,8 @@ test('catalog serializes query params', async () => {
   assert.match(lastUrl, /q=x\+y/)
   assert.match(lastUrl, /platform=web/)
   assert.match(lastUrl, /page=2/)
+  assert.match(lastUrl, /per_page=20/)
+  assert.doesNotMatch(lastUrl, /perPage=/)
 })
 
 test('catalog errors retain server diagnostic fields', async () => {

@@ -38,11 +38,12 @@ registry artifact or claim a positive production lifecycle E2E.
 - The production-catalog self-refusal command completed against
   `https://cordis.run/api/v1` with `SELF_INSTALL_FORBIDDEN` and verified that it
   did not pre-disable `cordis-mp` in the temporary profile.
-- Final `0.1.1` local validation passed 166/166 workspace tests, including
+- The historical pre-full-review local validation passed 166/166 workspace tests, including
   journal-core POSIX FULL 96/96, pack/public-release gates, host/DSH smoke,
   fixture install → pending → explicit activate → restart E2E, actionlint, and
   whitespace checks. The exact candidate also passed script-free
-  `npm publish --dry-run --access public --tag latest`; it was not published.
+  `npm publish --dry-run --access public --tag latest`; it was not published. The superseding
+  whole-project review is recorded in `SELF-REVIEW-CODEX-FULL-REVIEW.md`.
 
 ## Residual boundary
 

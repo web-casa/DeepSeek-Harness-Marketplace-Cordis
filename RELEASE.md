@@ -7,8 +7,9 @@
   and host-entry conflict protection. `@webcasa/web@0.1.0` was already published
   public with dist-tag `latest` by the approved direct interactive/2FA bootstrap;
   it is immutable and has no OIDC provenance. The `0.1.1` candidate has passed its
-  full local gate, but must be pushed to `main`, then be released through the protected
-  Trusted Publishing workflow after its human approvers are configured.
+  latest post-review local gate (198/198 workspace tests, including journal-core POSIX FULL
+  96/96), but must be pushed to `main`, then be released through the protected Trusted
+  Publishing workflow after its human approvers are configured.
 - Package policy: every source workspace remains `private: true`. The only
   intended public package is the generated, dependency-free `@webcasa/web`
   candidate at `0.1.1`, using dist-tag `latest`.
@@ -181,12 +182,21 @@ unpublished `0.1.1` patch candidate.
 
 ### Safety
 - Install lifecycle remains inspect → pre-disable → install → verify → pending → explicit activate.
-- `verifyInstalled` confirms the pnpm lockfile integrity for the exact installed artifact.
+- Only a fresh detail response with a confirmed `entryRevision` and complete nested v4 `source`
+  can authorize install or activation; snapshot/cache/304 and flat legacy source fields remain browse-only.
+- `verifyInstalled` confirms the pnpm lockfile integrity in the exact installed artifact's
+  `resolution` mapping, not an unrelated nested field.
+- Inspection streams and checks the exact registry tarball before mutation, reads the actual safe
+  `dsh.bundle.patch` declaration, and uses only inspected entry ids for pre-disable.
 - The marketplace host refuses its own npm package before inspect or any profile mutation, and after
   inspection refuses a foreign bundle that would pre-disable its `cordis-mp` entry id.
 
 ### Validation
-- Workspace tests, host smoke, DSH smoke, and DSH install/activate/restart E2E passed.
+- 198/198 workspace tests (including journal-core POSIX FULL 96/96), host smoke, DSH smoke,
+  fixture DSH install/pending/explicit-activate/restart E2E, pack/public-candidate gates,
+  actionlint, and production dependency audit passed.
+- A production self-refusal request returns `409 SELF_INSTALL_FORBIDDEN`; this is a safety
+  acceptance check, not a positive production plugin lifecycle E2E.
 
 ### Known boundary
 - `@webcasa/web@0.1.0` is public, strictly synchronized, and produces production API `count=1`.

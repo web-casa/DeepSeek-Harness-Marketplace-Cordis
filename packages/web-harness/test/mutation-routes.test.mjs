@@ -37,6 +37,16 @@ test('activate route forwards slug', async () => {
   server.close()
 })
 
+test('status route exposes durable pending activations after host recovery', async () => {
+  const svc = { pendingStatus() { return [{ slug: 'p', entryRevision: 'rev-1', createdAt: 1 }] } }
+  const server = await listen(createMutationHandler({ installService: svc }))
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/cordis-mp/status`)
+  const body = await res.json()
+  assert.equal(res.status, 200)
+  assert.deepEqual(body.pending, [{ slug: 'p', entryRevision: 'rev-1', createdAt: 1 }])
+  server.close()
+})
+
 test('invalid JSON body maps to 400', async () => {
   const svc = { async install() {} }
   const server = await listen(createMutationHandler({ installService: svc }))
@@ -44,6 +54,18 @@ test('invalid JSON body maps to 400', async () => {
   const body = await res.json()
   assert.equal(res.status, 400)
   assert.equal(body.error.code, 'BAD_JSON')
+  server.close()
+})
+
+test('oversized JSON body maps to a deterministic 400 diagnostic', async () => {
+  const svc = { async install() { throw new Error('must not install') } }
+  const server = await listen(createMutationHandler({ installService: svc }))
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/cordis-mp/install`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ payload: 'x'.repeat(64 * 1024) }),
+  })
+  const body = await res.json()
+  assert.equal(res.status, 400)
+  assert.equal(body.error.code, 'BODY_TOO_LARGE')
   server.close()
 })
 
@@ -77,7 +99,27 @@ test('host entry conflict maps to a non-mutating 409 diagnostic', async () => {
   server.close()
 })
 
-test('mountMutationRoutes registers three exact routes', () => {
+test('self-uninstall refusal maps to a non-mutating 409 diagnostic', async () => {
+  const svc = { async uninstall() { throw new InstallError('SELF_UNINSTALL_FORBIDDEN', 'the marketplace host cannot uninstall its own package') } }
+  const server = await listen(createMutationHandler({ installService: svc }))
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/cordis-mp/uninstall`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'self' }) })
+  const body = await res.json()
+  assert.equal(res.status, 409)
+  assert.equal(body.error.code, 'SELF_UNINSTALL_FORBIDDEN')
+  server.close()
+})
+
+test('fresh catalog recheck failure maps to a retryable 503 diagnostic', async () => {
+  const svc = { async activate() { throw new InstallError('CATALOG_RECHECK_FAILED', 'catalog must be reachable before activation') } }
+  const server = await listen(createMutationHandler({ installService: svc }))
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/cordis-mp/activate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: 'p' }) })
+  const body = await res.json()
+  assert.equal(res.status, 503)
+  assert.equal(body.error.code, 'CATALOG_RECHECK_FAILED')
+  server.close()
+})
+
+test('mountMutationRoutes registers four exact routes', () => {
   const routes = []; const ws = { register(r) { routes.push(r); return () => {} } }
   mountMutationRoutes(ws, { installService: { install() {}, uninstall() {} } })
   assert.deepEqual(routes.map(r => [r.kind, r.path]), [

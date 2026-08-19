@@ -65,11 +65,15 @@ GET /plugins?q=&category=&platform=&sort=stars|added&order=desc|asc&cursor=&limi
 
 ### 字段规则
 - `platforms` 必填；`["unknown"]` 只浏览不安装。
-- `source.type` v1 只接受 `npm`；GitHub-only 条目浏览/侧载。
+- `source` 是唯一的安装证据，必须完整嵌套提供；兼容显示的顶层 `npm` / `version` 等旧字段
+  不能授权安装。`source.type` v1 只接受 `npm`；GitHub-only 条目浏览/侧载。
 - `source.integrity` 必填且必须等于 registry `dist.integrity`（安装后复核
   lockfile integrity）。
-- `source.tarball` 必须与 `source.registry` 同 host。
+- `source.registry` 必须显式为批准的 HTTPS registry；`source.tarball` 必须与其 protocol、host
+  与 port 一致。
 - `engines.dsh` 必填。
+- 安装和显式 Activate 都必须重新获取详情，并要求用户确认的非空 `entryRevision` 与当前值一致。
+  list、snapshot、stale cache 或异常的 fresh `304` 不能授权 mutation。
 - `blocked=true` 为 kill switch：不可安装、不可更新、不可重新启用。
 
 ## 2. 详情

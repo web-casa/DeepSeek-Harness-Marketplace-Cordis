@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 
 const fixture = fileURLToPath(new URL('../spikes/S1/fixture-server.mjs', import.meta.url))
 const fixtureChild = spawn(process.execPath, [fixture], { stdio: ['ignore', 'pipe', 'pipe'] })
+process.once('exit', () => { try { fixtureChild.kill('SIGTERM') } catch {} })
 let fixtureOut = ''
 fixtureChild.stdout.on('data', d => fixtureOut += d)
 for (let i = 0; i < 20 && !fixtureOut.includes('\n'); i++) await new Promise(r => setTimeout(r, 50))
@@ -22,12 +23,14 @@ process.env.CORDIS_MP_PROFILE_DIR = profile
 
 const routes = []
 const fakeWebServer = { register(route) { routes.push(route); return () => {} } }
-const hostCtx = { webServer: fakeWebServer, effect(fn) { fn() } }
+let startup
+const hostCtx = { webServer: fakeWebServer, effect(fn) { startup = fn() } }
 const { apply } = await import('../apps/web/src/index.js')
 const captured = {}
 const ctx = { inject(_deps, fn) { captured.fn = fn } }
 apply(ctx)
 captured.fn(hostCtx)
+await startup
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', 'http://127.0.0.1')

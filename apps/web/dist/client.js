@@ -55,7 +55,9 @@ function createMarketApi({ fetchImpl = globalThis.fetch, base = "" } = {}) {
     session,
     async catalog(params = {}) {
       const qs = new URLSearchParams();
-      for (const [k, v] of Object.entries(params)) if (v !== void 0 && v !== null && v !== "") qs.set(k, String(v));
+      for (const [k, v] of Object.entries(params)) {
+        if (v !== void 0 && v !== null && v !== "") qs.set(k === "perPage" ? "per_page" : k, String(v));
+      }
       const res = await fetchImpl(`${base}/cordis-mp/catalog?${qs}`);
       return json(res);
     },
@@ -107,6 +109,40 @@ function createMarketController(api) {
 
 // apps/web/src/client/MarketSection.js
 import React from "react";
+
+// packages/catalog-core/src/schema.mjs
+var HASH_RE = /^sha(256|512)-[A-Za-z0-9+/=]+$/;
+var NPM_NAME_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
+function installability(item, platform = "web") {
+  const reasons = [];
+  const src = item?.source || {};
+  if (src.type !== "npm") reasons.push("non-npm-source");
+  else {
+    if (!src.packageName || !NPM_NAME_RE.test(src.packageName)) reasons.push("bad-package-name");
+    if (typeof src.version !== "string" || !/^\d+\.\d+\.\d+/.test(src.version)) reasons.push("bad-version");
+    if (typeof src.integrity !== "string" || !HASH_RE.test(src.integrity)) reasons.push("missing-integrity");
+    if (!["https://registry.npmjs.org"].includes(src.registry)) reasons.push("registry-not-allowed");
+    if (typeof src.tarball !== "string" || src.tarball.length === 0) reasons.push("missing-tarball");
+    else {
+      try {
+        const registry = new URL(src.registry);
+        const tarball = new URL(src.tarball);
+        if (tarball.protocol !== registry.protocol || tarball.hostname !== registry.hostname || tarball.port !== registry.port) reasons.push("tarball-origin-mismatch");
+      } catch {
+        reasons.push("bad-tarball-url");
+      }
+    }
+  }
+  const platforms = Array.isArray(item?.platforms) ? item.platforms : [];
+  if (!platforms.includes(platform)) reasons.push(`platform-${platforms.join("+")}`);
+  if (item?.blocked) reasons.push("blocked");
+  if (item?.deprecated) reasons.push("deprecated");
+  if (typeof item?.entryRevision !== "string" || item.entryRevision.length === 0) reasons.push("missing-entry-revision");
+  if (typeof item?.engines?.dsh !== "string" || !item.engines.dsh.startsWith(">=")) reasons.push("bad-engines-dsh");
+  return { installable: reasons.length === 0, reasons, reason: reasons.join(",") };
+}
+
+// apps/web/src/client/MarketSection.js
 var h = React.createElement;
 var PAGE_SIZE = 12;
 var styles = {
@@ -160,8 +196,7 @@ function screenshotUrl(value) {
   }
 }
 function canInstall(item) {
-  const platforms = item?.platforms || [];
-  return !item?.blocked && !item?.deprecated && (platforms.includes("web") || platforms.includes("unknown"));
+  return installability(item, "web").installable;
 }
 function PlatformBadges({ platforms = [] }) {
   const labels = platforms.length ? platforms : ["unknown"];
@@ -315,6 +350,21 @@ function MarketSection({ controller }) {
   React.useEffect(() => {
     void load({ nextQuery: "", cursor: null, history: [] });
   }, [load]);
+  React.useEffect(() => {
+    if (typeof controller.status !== "function") return void 0;
+    let active = true;
+    void controller.status().then((status) => {
+      if (!active) return;
+      const pending = Array.isArray(status?.pending) ? status.pending : [];
+      const recovered = Object.fromEntries(pending.map((item) => typeof item === "string" ? item : item?.slug).filter((slug) => typeof slug === "string" && slug.length > 0).map((slug) => [slug, true]));
+      setPendingBySlug((previous) => ({ ...previous, ...recovered }));
+    }).catch((nextError) => {
+      if (active) setError(errorInfo(nextError));
+    });
+    return () => {
+      active = false;
+    };
+  }, [controller]);
   function search() {
     void load({ nextQuery: query, cursor: null, history: [] });
   }

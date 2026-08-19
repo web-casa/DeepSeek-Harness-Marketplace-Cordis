@@ -40,7 +40,9 @@ export function createMarketApi({ fetchImpl = globalThis.fetch, base = '' } = {}
     session,
     async catalog(params = {}) {
       const qs = new URLSearchParams()
-      for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') qs.set(k, String(v))
+      for (const [k, v] of Object.entries(params)) {
+        if (v !== undefined && v !== null && v !== '') qs.set(k === 'perPage' ? 'per_page' : k, String(v))
+      }
       const res = await fetchImpl(`${base}/cordis-mp/catalog?${qs}`)
       return json(res)
     },

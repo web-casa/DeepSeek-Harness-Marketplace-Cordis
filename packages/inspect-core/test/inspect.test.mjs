@@ -35,6 +35,25 @@ test('inspectTarball reads package/package.json and patch', async () => {
   assert.deepEqual(r.entryIds, ['a', 'b'])
 })
 
+test('inspectTarball reads the actual safe dsh.bundle.patch declaration', async () => {
+  const file = makeTarball({
+    'package.json': JSON.stringify({ name: 'demo', version: '1.0.0', dsh: { bundle: { patch: './nested/plugin.patch.yml' } } }),
+    'nested/plugin.patch.yml': '- insert:\n    - id: actual-bundle-entry\n',
+    'cordis.patch.yml': '- insert:\n    - id: decoy-entry\n',
+  })
+  const r = await inspectTarball(file)
+  assert.equal(r.bundlePatch, 'nested/plugin.patch.yml')
+  assert.equal(r.hasBundlePatch, true)
+  assert.deepEqual(r.entryIds, ['actual-bundle-entry'])
+})
+
+test('inspectTarball rejects an unsafe dsh.bundle.patch path', async () => {
+  const file = makeTarball({
+    'package.json': JSON.stringify({ name: 'demo', version: '1.0.0', dsh: { bundle: { patch: '../outside.yml' } } }),
+  })
+  await assert.rejects(() => inspectTarball(file), e => e.code === 'BAD_BUNDLE_PATCH')
+})
+
 test('inspectTarball rejects missing manifest', async () => {
   const file = makeTarball({ 'readme.md': '# hi' })
   await assert.rejects(() => inspectTarball(file), e => e.code === 'BAD_MANIFEST')

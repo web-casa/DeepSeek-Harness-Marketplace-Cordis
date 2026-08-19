@@ -11,10 +11,10 @@ const catalog = {
   count: 2,
   page: { cursor: '1', hasMore: false, limit: 50 },
   items: [
-    { slug: 'a', name: 'a', description: { zh: 'A', en: 'A' }, category: 'cat',
+    { slug: 'a', name: 'a', entryRevision: 'a-rev-1', description: { zh: 'A', en: 'A' }, category: 'cat',
       source: { type: 'npm', packageName: 'a', version: '1.0.0', integrity: 'sha512-AAAA', registry: 'https://registry.npmjs.org', tarball: 'https://registry.npmjs.org/a/-/a-1.0.0.tgz' },
       platforms: ['web','desktop'], engines: { dsh: '>=0.1.0-rc.6 <0.2.0' }, stars: 1, blocked: false },
-    { slug: 'b', name: 'b', description: { zh: 'B', en: 'B' }, category: 'cat',
+    { slug: 'b', name: 'b', entryRevision: 'b-rev-1', description: { zh: 'B', en: 'B' }, category: 'cat',
       source: { type: 'npm', packageName: 'b', version: '1.0.0', integrity: 'sha512-BBBB', registry: 'https://registry.npmjs.org', tarball: 'https://registry.npmjs.org/b/-/b-1.0.0.tgz' },
       platforms: ['desktop'], engines: { dsh: '>=0.1.0-rc.6 <0.2.0' }, stars: 2, blocked: false },
   ],
@@ -59,6 +59,40 @@ test('network failure falls back to snapshot', async () => {
   assert.equal(res.items.length, 2)
 })
 
+test('fresh detail review never falls back to a cached or snapshot response', async () => {
+  let online = true
+  const c = new CatalogClient({
+    snapshot: catalog,
+    fetchImpl: async () => {
+      if (!online) throw new Error('offline')
+      return fakeResponse(200, catalog, { etag: '"detail"' })
+    },
+  })
+  await c.detail('a')
+  online = false
+  await assert.rejects(() => c.fetchFresh('a'), e => e instanceof CatalogError && e.code === 'NETWORK')
+})
+
+test('fresh detail review rejects an invalid 304 instead of authorizing a cached item', async () => {
+  let calls = 0
+  const c = clientWith(async () => {
+    calls++
+    return calls === 1 ? fakeResponse(200, catalog, { etag: '"detail"' }) : fakeResponse(304, {})
+  })
+  await c.detail('a')
+  await assert.rejects(() => c.fetchFresh('a'), e => e instanceof CatalogError && e.code === 'NO_FRESH_RESPONSE' && e.status === 304)
+})
+
+test('installability only permits strict install artifacts for the requested platform', () => {
+  const base = catalog.items[0]
+  assert.equal(installability({ ...base, platforms: ['unknown'] }, 'web').installable, false)
+  assert.equal(installability({ ...base, source: { ...base.source, tarball: null } }, 'web').reasons.includes('missing-tarball'), true)
+  assert.equal(installability({ ...base, source: { ...base.source, tarball: 'http://registry.npmjs.org/a/-/a-1.0.0.tgz' } }, 'web').reasons.includes('tarball-origin-mismatch'), true)
+  assert.equal(installability({ ...base, source: { ...base.source, registry: null } }, 'web').reasons.includes('registry-not-allowed'), true)
+  assert.equal(installability({ ...base, entryRevision: null }, 'web').reasons.includes('missing-entry-revision'), true)
+  assert.equal(installability({ ...base, engines: {} }, 'web').reasons.includes('bad-engines-dsh'), true)
+})
+
 test('legacy flat item and page number are normalized', async () => {
   const legacy = { schemaVersion: 1, catalogRevision: 'r', total: 1, page: 1, per_page: 30, items: [
     { slug: 'legacy', name: 'legacy', npm: 'legacy', version: '2.0.0', integrity: 'sha512-CCCC', description: 'Legacy text', platforms: ['web'] }
@@ -68,6 +102,8 @@ test('legacy flat item and page number are normalized', async () => {
   assert.equal(res.page.cursor, '1'); assert.equal(res.page.limit, 30)
   assert.equal(res.items[0].description.zh, 'Legacy text')
   assert.equal(res.items[0].source.packageName, 'legacy')
+  assert.equal(c.installability(res.items[0], 'web').installable, false)
+  assert.equal(c.installability(res.items[0], 'web').reasons.includes('non-npm-source'), true)
 })
 
 test('detail rejects screenshots outside the contract CDN', async () => {

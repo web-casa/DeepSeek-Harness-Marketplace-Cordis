@@ -9,6 +9,11 @@ export class CatalogError extends Error {
 
 const DEFAULT_BASE = 'https://cordis.run/api/v1'
 
+function boundedPositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10)
+  return Number.isInteger(parsed) && parsed > 0 ? Math.min(100, parsed) : fallback
+}
+
 function isContractScreenshot(value) {
   try {
     const url = new URL(value)
@@ -44,12 +49,18 @@ export class CatalogClient {
     try {
       res = await this.fetchImpl(key, { method: 'GET', headers, redirect: 'error' })
     } catch (e) {
+      if (fresh) throw new CatalogError('NETWORK', 'fresh catalog request failed')
       const stale = this.#cached(key)
       if (stale) return { ...stale, source: 'stale-cache' }
       if (this.snapshot) return { source: 'snapshot', ...this.#snapshotFor(path) }
       throw new CatalogError('NETWORK', `catalog request failed: ${e.message}`)
     }
     if (res.status === 304) {
+      // A fresh review deliberately does not send an ETag.  Accepting a 304
+      // here would turn a cache entry into authorization for an install or
+      // activation decision, so fail closed even if a broken intermediary
+      // emits one.
+      if (fresh) throw new CatalogError('NO_FRESH_RESPONSE', 'server returned 304 for a fresh catalog request', { status: 304 })
       const cached = hit
       if (cached) return { ...cached, source: 'cache' }
       throw new CatalogError('NO_CACHE', 'server returned 304 but no cache entry exists', { status: 304 })
@@ -76,8 +87,8 @@ export class CatalogClient {
     let items = (this.snapshot.items || []).map(validateCatalogItem)
     const platform = q.get('platform'); if (platform) items = items.filter(i => i.platforms.includes(platform))
     const term = (q.get('q') || '').toLowerCase(); if (term) items = items.filter(i => i.slug.toLowerCase().includes(term) || i.name.toLowerCase().includes(term))
-    const page = parseInt(q.get('page') || q.get('cursor') || '1', 10) || 1
-    const perPage = parseInt(q.get('per_page') || q.get('limit') || '50', 10) || 50
+    const page = boundedPositiveInt(q.get('page') || q.get('cursor') || '1', 1)
+    const perPage = boundedPositiveInt(q.get('per_page') || q.get('limit') || '50', 50)
     const start = (page - 1) * perPage
     return { data: { ...this.snapshot, count: items.length, page: { cursor: String(page), hasMore: start + perPage < items.length, limit: perPage }, items: items.slice(start, start + perPage) } }
   }
@@ -85,10 +96,10 @@ export class CatalogClient {
   async list(options = {}) {
     const qs = new URLSearchParams()
     for (const k of ['q','category','platform','sort','order']) if (options[k] !== undefined && options[k] !== null && options[k] !== '') qs.set(k, options[k])
-    if (options.page) qs.set('page', String(options.page))
-    if (options.perPage) qs.set('per_page', String(options.perPage))
-    if (options.cursor) qs.set('cursor', String(options.cursor))
-    if (options.limit) qs.set('limit', String(options.limit))
+    if (options.page !== undefined && options.page !== null) qs.set('page', String(options.page))
+    if (options.perPage !== undefined && options.perPage !== null) qs.set('per_page', String(options.perPage))
+    if (options.cursor !== undefined && options.cursor !== null && options.cursor !== '') qs.set('cursor', String(options.cursor))
+    if (options.limit !== undefined && options.limit !== null) qs.set('limit', String(options.limit))
     const res = await this.#request(`/plugins?${qs}`)
     return { source: res.source, catalogRevision: res.data.catalogRevision, count: res.data.count, page: res.data.page, categories: res.data.categories, items: res.data.items.map(validateCatalogItem) }
   }

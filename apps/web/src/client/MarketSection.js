@@ -1,5 +1,6 @@
 // settings.section 市场页组件：无 JSX，直接 React.createElement，便于无构建使用。
 import React from 'react'
+import { installability } from '@cordis-mp/catalog-core'
 
 const h = React.createElement
 const PAGE_SIZE = 12
@@ -55,8 +56,7 @@ function screenshotUrl(value) {
 }
 
 function canInstall(item) {
-  const platforms = item?.platforms || []
-  return !item?.blocked && !item?.deprecated && (platforms.includes('web') || platforms.includes('unknown'))
+  return installability(item, 'web').installable
 }
 
 export function PlatformBadges({ platforms = [] }) {
@@ -191,6 +191,22 @@ export function MarketSection({ controller }) {
   }, [controller])
 
   React.useEffect(() => { void load({ nextQuery: '', cursor: null, history: [] }) }, [load])
+  React.useEffect(() => {
+    if (typeof controller.status !== 'function') return undefined
+    let active = true
+    void controller.status().then(status => {
+      if (!active) return
+      const pending = Array.isArray(status?.pending) ? status.pending : []
+      const recovered = Object.fromEntries(pending
+        .map(item => typeof item === 'string' ? item : item?.slug)
+        .filter(slug => typeof slug === 'string' && slug.length > 0)
+        .map(slug => [slug, true]))
+      setPendingBySlug(previous => ({ ...previous, ...recovered }))
+    }).catch(nextError => {
+      if (active) setError(errorInfo(nextError))
+    })
+    return () => { active = false }
+  }, [controller])
 
   function search() { void load({ nextQuery: query, cursor: null, history: [] }) }
   function nextPage() {

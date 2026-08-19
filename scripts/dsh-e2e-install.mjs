@@ -29,9 +29,19 @@ const add = spawnSync('dsh', ['plugin', '--profile', 'web', 'add', `file:${tgz}`
 if (add.status !== 0) { console.error('add failed\n', add.stdout, add.stderr); process.exit(1) }
 
 let fixtureChild = null
+const children = new Set()
+function track(child) {
+  children.add(child)
+  child.once('exit', () => children.delete(child))
+  return child
+}
+function cleanupChildren() {
+  for (const child of children) { try { child.kill('SIGTERM') } catch {} }
+}
+process.once('exit', cleanupChildren)
 let apiBase = requestedApi
 if (!apiBase) {
-  fixtureChild = spawn(process.execPath, [fixture], { stdio: ['ignore', 'pipe', 'pipe'] })
+  fixtureChild = track(spawn(process.execPath, [fixture], { stdio: ['ignore', 'pipe', 'pipe'] }))
   let fixtureOut = ''; fixtureChild.stdout.on('data', d => fixtureOut += d)
   for (let i = 0; i < 40 && !fixtureOut.includes('\n'); i++) await new Promise(r => setTimeout(r, 50))
   const fixturePort = fixtureOut.trim().split('\n')[0]
@@ -41,7 +51,7 @@ if (!apiBase) {
 console.log(`catalog api ${apiBase} (${requestedApi ? 'external' : 'fixture'})`)
 
 const webEnv = { ...env, CORDIS_RUN_API: apiBase }
-const web = spawn('dsh', ['web', '--port', '0'], { env: webEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+const web = track(spawn('dsh', ['web', '--port', '0'], { env: webEnv, stdio: ['ignore', 'pipe', 'pipe'] }))
 let out = '', err = ''; web.stdout.on('data', d => out += d); web.stderr.on('data', d => err += d)
 let port = null
 for (let i = 0; i < 120 && !port; i++) { const m = /dsh web: http:\/\/127\.0\.0\.1:(\d+)/.exec(out); if (m) port = m[1]; else await new Promise(r => setTimeout(r, 250)) }
@@ -97,7 +107,7 @@ if (dump2.status !== 0 || entryIds.some(id => new RegExp(`${escapeRegExp(id)}[\\
 // 重启 DSH，验证 activate 后目标插件的已知宿主路由真实可达。
 web.kill()
 await new Promise(r => setTimeout(r, 500))
-const web2 = spawn('dsh', ['web', '--port', '0'], { env: webEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+const web2 = track(spawn('dsh', ['web', '--port', '0'], { env: webEnv, stdio: ['ignore', 'pipe', 'pipe'] }))
 let out2 = '', err2 = ''; web2.stdout.on('data', d => out2 += d); web2.stderr.on('data', d => err2 += d)
 let port2 = null
 for (let i = 0; i < 120 && !port2; i++) { const m = /dsh web: http:\/\/127\.0\.0\.1:(\d+)/.exec(out2); if (m) port2 = m[1]; else await new Promise(r => setTimeout(r, 250)) }

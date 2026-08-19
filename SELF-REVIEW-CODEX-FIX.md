@@ -14,7 +14,8 @@ M2b 不能宣称完成；4 个阻断项，已全部修复。
      原有禁用行。
 3. adoptExternal 信任磁盘当前内容：新增 expectedBytes 参数，InstallService
    传入 PM 返回的 profileFiles 字节，hash 不符抛 CONFLICT。
-4. catalog entryIds 空数组 truthy bug：空数组不再覆盖 fresh.entryIds。
+4. 历史 `catalog entryIds` 兜底规则已由后续全项目复审取代：当前 pre-disable 只信任通过
+   integrity inspection 的实际 bundle patch entry ids，不再把目录 advisory 值作为兜底。
 5. inspector 流错误路径：reader.cancel/out.destroy/删除半成品/流错误捕获。
 6. `[]` 恢复覆盖首行注释：改为在注释后插入 `[]`，保留注释。
 7. E2E 脚本检查 build/dump spawn 状态。
@@ -23,3 +24,6 @@ M2b 不能宣称完成；4 个阻断项，已全部修复。
 - 全 workspace 146 tests / 146 pass。
 - 真实 E2E install/activate/restart PASS；重启后 dsh-market 路由 200；
   patch 注释保留、禁用行正确移除。
+
+本记录的 146/146 计数是当时的历史结果；现行完整复审记录见
+`SELF-REVIEW-CODEX-FULL-REVIEW.md`。

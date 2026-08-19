@@ -36,7 +36,7 @@ test('install returns profile files and verify reads node_modules', async () => 
   assert.equal(res.exitCode, 0)
   assert.ok(res.profileFiles['package.json'])
   assert.ok(res.profileFiles['pnpm-lock.yaml'])
-  assert.deepEqual(calls[0], ['plugin', '--profile', 'web', 'add', 'demo@1.0.0', '--ignore-scripts'])
+  assert.deepEqual(calls[0], ['plugin', '--profile', 'web', 'add', '--ignore-scripts', '--', 'demo@1.0.0'])
   assert.equal(await pm.verifyInstalled(artifact), true)
 })
 
@@ -62,6 +62,13 @@ test('verifyInstalled accepts quoted peer-suffixed v9 records with nested resolu
   assert.equal(await pm.verifyInstalled(artifact), true)
 })
 
+test('verifyInstalled rejects an integrity field outside the resolution mapping', async () => {
+  const artifact = { packageName: 'demo', version: '1.0.0', integrity: INTEGRITY }
+  const lock = `lockfileVersion: '9.0'\n\npackages:\n\n  demo@1.0.0:\n    resolution:\n      tarball: https://registry.npmjs.org/demo/-/demo-1.0.0.tgz\n    dependencies:\n      integrity: ${INTEGRITY}\n\nsnapshots:\n\n  demo@1.0.0: {}\n`
+  const { pm } = setup({ lock })
+  assert.equal(await pm.verifyInstalled(artifact), false)
+})
+
 test('install failure returns no profile files', async () => {
   const { pm } = setup()
   pm.runner.run = async () => ({ exitCode: 1, timedOut: false, stdout: '', stderr: 'boom', cancelled: false })
@@ -75,5 +82,5 @@ test('remove returns profile files', async () => {
   const res = await pm.remove('demo')
   assert.equal(res.exitCode, 0)
   assert.ok(res.profileFiles['package.json'])
-  assert.equal(calls[0][4], 'demo')
+  assert.deepEqual(calls[0], ['plugin', '--profile', 'web', 'remove', '--', 'demo'])
 })

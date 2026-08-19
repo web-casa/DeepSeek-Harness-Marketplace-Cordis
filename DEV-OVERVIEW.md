@@ -44,12 +44,15 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
-- 166 tests / 166 pass（`0.1.1` 候选完整本地门禁）。
+- 198 tests / 198 pass（2026-08-20 `0.1.1` 候选的最新完整本地门禁；其中
+  journal-core POSIX FULL 96/96）。
 - 真实 DSH E2E PASS：install → patch disable → activate → restart → dsh-market
   路由 200。
 - `verifyInstalled` 已复核 `node_modules` manifest 的 name/version，及
   `pnpm-lock.yaml` 中该精确 artifact 的 `resolution.integrity`；任何缺失、
   不匹配、非普通文件或超限 lockfile 均 fail-closed 并触发既有回滚路径。
+- lockfile 证明只读取精确 package record 的 `resolution` mapping；不会把同一 record 内
+  `dependencies` 等其他 mapping 中偶然出现的 `integrity` 字段误当成 artifact 证明。
 - Desktop 的同一 integrity 复核现也识别 pnpm 9 对带 peer dependency 的
   `name@version(peer@version)` key，但仍要求精确 `name@version` 前缀和受限的
   peer context；不会把相邻版本或任意前缀误判为已审阅 artifact。
@@ -113,10 +116,17 @@
   remote；`publish.yml` 只允许 `main`，先在无 OIDC token 的 job 重跑 workspace/pack/host/DSH E2E，再由唯一
   `id-token: write` job 下载 SHA-512 复核后的 tarball 发布。待 GitHub `npm` environment 的人类审批者确认并
   完成 `npm trust github` 后，`0.1.1` 才能通过该受保护的 Trusted Publishing 工作流发布。
-- `0.1.1` 候选最终本地验收（2026-08-20）已通过：166/166 workspace tests（其中 journal-core
-  POSIX FULL 96/96）、`pack:check`、`release:public-check`、host/DSH smoke、fixture 正向
-  install → pending → explicit activate → restart E2E、actionlint 与 `git diff --check`。其生成
-  tarball 的 script-free `npm publish --dry-run --access public --tag latest` 也通过；这不是发布。
+- 166/166 是本轮全项目复审前的历史本地门禁记录。复审后的最新门禁为 198/198 workspace tests
+  （其中 journal-core POSIX FULL 96/96）、`pack:check`、`release:public-check`、host/DSH smoke、
+  fixture 正向 install → pending → explicit activate → restart E2E、生产目录 self-refusal、
+  actionlint、production dependency audit 与 `git diff --check`。其生成 tarball 的 script-free
+  `npm publish --dry-run --access public --tag latest` 也通过；这不是发布。
+- 本次 Codex 全项目复审已将以下边界补为 fail-closed：fresh install/activate 不接受 snapshot、
+  stale cache 或 fresh `304`；旧平铺 DTO 仅可浏览，完整嵌套 v4 `source` 才可安装；下载采用
+  streaming SHA-512/大小门禁并清理失败 staged artifact；只解析工件实际声明且安全的
+  `dsh.bundle.patch`，只信任其 entry ids；pending 在原安装事务内持久化并在损坏时阻止启动；
+  DSH CLI 的 package argument 使用 `--` 分隔，runner 也覆盖同步 spawn/abort/旧 child close
+  竞态。详情见 `SELF-REVIEW-CODEX-FULL-REVIEW.md`；journal-core 未修改。
 - 父仓库的单包 npm 同步现有独立只读预检：
   `pnpm plugins:sync -- --pkg=<package> --dry-run --no-assets` 只读取 npm
   packument，并要求包名、latest `dsh.bundle`、精确 version/SHA-512/tarball/
@@ -131,9 +141,10 @@
 
 ## 未完成事项
 1. `@webcasa/web@0.1.0` 的 direct bootstrap、strict preflight、`dev-assistant` 同步、生产 `count=1`
-   与 API 契约 probe 均已完成；它没有 OIDC provenance。`0.1.1` 是包含宿主自安装/entry-id 冲突保护的
-   未发布补丁候选。先完成其完整本地门禁、提交与 push；随后由 owner 指定 GitHub `npm` environment 的
-   人类审批者，配置/复核 `npm trust github`，再从受保护 workflow 发布。父仓库的 Apache-2.0 文件没有被复制或套用。
+   与 API 契约 probe 均已完成；它没有 OIDC provenance。`0.1.1` 是包含宿主自安装/entry-id 冲突保护及
+   本次全项目复审修复的未发布补丁候选。本次提交仍需 push 到 `main`；随后由 owner 指定 GitHub `npm`
+   environment 的人类审批者，配置/复核 `npm trust github`，再从受保护 workflow 发布。父仓库的
+   Apache-2.0 文件没有被复制或套用。
 2. `0.1.1` 发布后必须重跑父仓库只读预检
    `pnpm plugins:sync -- --pkg=@webcasa/web --dry-run --no-assets`，并只在 exact latest artifact ready 后
    以已确认的 `dev-assistant` 分类同步。不得从包名、README 或 `bundle.patch` 反推 version/sha512/tarball。
@@ -143,7 +154,6 @@
    显式 Activate→重启 E2E。若需 Microsoft Store
    发布，还要走独立审查后更新 `store-curated-plugins.json`，不得提前放宽 allowlist。
 4. 触发并记录 `windows-best-effort` 的首个 GitHub Actions green run；Windows 保持 BEST_EFFORT。
-5. 8/24 后 codex 对 fc668e4..HEAD 补独立评审。
 
 ## 关键命令
 - 全部测试：`pnpm -r test`（以当前 CI 输出为准）
