@@ -50,6 +50,9 @@
 - `verifyInstalled` 已复核 `node_modules` manifest 的 name/version，及
   `pnpm-lock.yaml` 中该精确 artifact 的 `resolution.integrity`；任何缺失、
   不匹配、非普通文件或超限 lockfile 均 fail-closed 并触发既有回滚路径。
+- Desktop 的同一 integrity 复核现也识别 pnpm 9 对带 peer dependency 的
+  `name@version(peer@version)` key，但仍要求精确 `name@version` 前缀和受限的
+  peer context；不会把相邻版本或任意前缀误判为已审阅 artifact。
 - 父仓库 `/home/ivmm/daohang/toolso-ai-open` 已实现并部署 cordis.run v4 后端：只有完整、精确
   npm registry 工件快照才会进入安装目录；列表/详情支持 ETag/304、cursor、JSON 404，
   `quarantined` 条目以 `blocked:true` 保留 kill switch；preset 下载在 SHA-256/大小复核后
@@ -67,7 +70,8 @@
 - Desktop 的 `feat/cordis-v4-desktop` 已在独立源码树复验：嵌套 DTO、`platform=desktop`、cursor、
   ETag/304、JSON 404、严格 pending/explicit activate 与 preset 200 直出适配仍在。新增
   `pnpm verify:cordis-market` 只读生产 smoke，实际通过直接 JSON、ETag/304、JSON 404；
-  `pnpm verify:cordis-preset` 也通过同域 `200 application/zip`。当前 `count=0`，因此没有把
+  `pnpm verify:cordis-preset` 也通过同域 `200 application/zip`；Rust nextest 为 sidecar 35/35、
+  Tauri 97/97，覆盖率门槛也已复核。当前 `count=0`，因此没有把
   这次结构联调表述为 Desktop 安装 E2E；Microsoft Store allowlist 也保持不变。
 - Web 市场已提供详情弹窗、仅渲染 `https://cdn.cordis.run` 截图、cursor 历史分页、
   Web/Desktop 平台徽章及可展开的错误诊断（code/HTTP/request ID/retry）。安装和启用
