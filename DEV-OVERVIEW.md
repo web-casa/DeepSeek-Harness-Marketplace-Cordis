@@ -14,7 +14,7 @@
   - web-harness：本地 HTTP 路由 + mutation guard
   - dsh-runner：真实 dsh CLI 适配 + patch 激活端口
   - inspect-core：tarball/entryIds/integrity 检查
-- apps/web：DSH 插件壳 + 客户端市场 UI（搜索、详情、分页、安装/显式启用）
+- apps/web：DSH 插件壳 + settings 内市场落地页（目录状态、受控安装路径、搜索、详情、分页、安装/显式启用）
 
 ## 时间线
 1. 调研 dsh-market / dsh-plugin-hub / DSH 机制。
@@ -44,7 +44,7 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
-- 198 tests / 198 pass（2026-08-20 `0.1.1` 候选的最新完整本地门禁；其中
+- 199 tests / 199 pass（2026-08-20 `0.1.1` 候选的最新完整本地门禁；其中
   journal-core POSIX FULL 96/96）。
 - 真实 DSH E2E PASS：install → patch disable → activate → restart → dsh-market
   路由 200。
@@ -86,6 +86,10 @@
 - Web 市场已提供详情弹窗、仅渲染 `https://cdn.cordis.run` 截图、cursor 历史分页、
   Web/Desktop 平台徽章及可展开的错误诊断（code/HTTP/request ID/retry）。安装和启用
   仍只经既有 guard-backed controller/API；页面不新增 mutation 通道。
+- Web 的 `settings.section` 现以“落地页 → 目录”组织：目录卡只显示实际查询到的加载/重试/
+  已载入状态与动态 count，六阶段受控安装路径准确对应 inspect → pre-disable → install →
+  verify → pending → explicit activate；“浏览目录”只滚动并聚焦搜索框。它没有创建新的 API
+  或绕过确认/guard。
 - 已接入 `.github/workflows/ci.yml`：两个无凭据 Ubuntu job 分别执行 test/build/host
   smoke 与真实 DSH smoke/E2E；Node 24.18.0、pnpm 11.10.0、DSH 0.1.0-rc.7 和
   Actions 提交均固定。CI 的 DSH integration 只使用临时 profile 与本地 fixture，
@@ -116,7 +120,7 @@
   remote；`publish.yml` 只允许 `main`，先在无 OIDC token 的 job 重跑 workspace/pack/host/DSH E2E，再由唯一
   `id-token: write` job 下载 SHA-512 复核后的 tarball 发布。待 GitHub `npm` environment 的人类审批者确认并
   完成 `npm trust github` 后，`0.1.1` 才能通过该受保护的 Trusted Publishing 工作流发布。
-- 166/166 是本轮全项目复审前的历史本地门禁记录。复审后的最新门禁为 198/198 workspace tests
+- 166/166 是本轮全项目复审前的历史本地门禁记录。复审后的最新门禁为 199/199 workspace tests
   （其中 journal-core POSIX FULL 96/96）、`pack:check`、`release:public-check`、host/DSH smoke、
   fixture 正向 install → pending → explicit activate → restart E2E、生产目录 self-refusal、
   actionlint、production dependency audit 与 `git diff --check`。其生成 tarball 的 script-free

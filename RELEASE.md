@@ -7,7 +7,7 @@
   and host-entry conflict protection. `@webcasa/web@0.1.0` was already published
   public with dist-tag `latest` by the approved direct interactive/2FA bootstrap;
   it is immutable and has no OIDC provenance. The `0.1.1` candidate has passed its
-  latest post-review local gate (198/198 workspace tests, including journal-core POSIX FULL
+  latest post-review local gate (199/199 workspace tests, including journal-core POSIX FULL
   96/96), but must be pushed to `main`, then be released through the protected Trusted
   Publishing workflow after its human approvers are configured.
 - Package policy: every source workspace remains `private: true`. The only
@@ -179,6 +179,8 @@ unpublished `0.1.1` patch candidate.
 ### Added
 - Contract-ready catalog client, guarded Web harness, DSH runner, inspection gate, and staged activation flow.
 - Market details, trusted screenshots, cursor pagination, platform badges, and actionable errors.
+- An in-DSH settings landing page that exposes actual catalog state and the controlled install path;
+  its browse CTA only focuses the existing directory and creates no mutation channel.
 
 ### Safety
 - Install lifecycle remains inspect → pre-disable → install → verify → pending → explicit activate.
@@ -192,7 +194,7 @@ unpublished `0.1.1` patch candidate.
   inspection refuses a foreign bundle that would pre-disable its `cordis-mp` entry id.
 
 ### Validation
-- 198/198 workspace tests (including journal-core POSIX FULL 96/96), host smoke, DSH smoke,
+- 199/199 workspace tests (including journal-core POSIX FULL 96/96), host smoke, DSH smoke,
   fixture DSH install/pending/explicit-activate/restart E2E, pack/public-candidate gates,
   actionlint, and production dependency audit passed.
 - A production self-refusal request returns `409 SELF_INSTALL_FORBIDDEN`; this is a safety

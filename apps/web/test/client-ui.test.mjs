@@ -30,6 +30,30 @@ test('apply registers settings section when slots exist', async () => {
   assert.equal(registration.label(), '插件市场')
 })
 
+test('MarketLanding communicates the controlled lifecycle and catalog state', async () => {
+  const React = await import('react')
+  const { renderToStaticMarkup } = await import('react-dom/server')
+  const { MarketLanding } = await import('../src/client/MarketSection.js')
+
+  const ready = renderToStaticMarkup(React.createElement(MarketLanding, {
+    count: 6, loaded: true, loading: false, hasQuery: false, onBrowse() {},
+  }))
+  assert.match(ready, /为 Harness 建立可控的插件目录/)
+  assert.match(ready, /6/)
+  assert.match(ready, /个可见 Web 条目/)
+  assert.match(ready, /Inspect/)
+  assert.match(ready, /Pre-disable/)
+  assert.match(ready, /Verify/)
+  assert.match(ready, /默认不运行，直到你确认/)
+  assert.match(ready, /浏览目录/)
+
+  const retry = renderToStaticMarkup(React.createElement(MarketLanding, {
+    count: 6, loaded: true, loading: false, error: { message: 'catalog unavailable' }, onBrowse() {},
+  }))
+  assert.match(retry, /目录需要重试/)
+  assert.match(retry, /仍保留已载入条目/)
+})
+
 test('MarketSection renders search/list chrome', async () => {
   const React = await import('react')
   const { renderToStaticMarkup } = await import('react-dom/server')

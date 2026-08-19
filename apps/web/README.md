@@ -23,6 +23,18 @@ Every marketplace mutation remains guarded by the host's existing mutation
 token and profile lock. A catalog item marked `blocked` or `deprecated` is
 display-only and cannot cross the installation gate.
 
+## Settings landing page
+
+The plugin's only visual entry point is DSH `settings.section`. It opens with
+an in-product landing page, then continues directly into the existing catalog:
+
+- the status card reflects the real catalog request state and count; it does not
+  manufacture availability claims;
+- the six visible stages mirror the actual lifecycle above, including default
+  pending state and explicit activation;
+- “浏览目录” only scrolls to and focuses the existing search control. It does
+  not install, activate, or create a second mutation route.
+
 ## Release candidate layout
 
 The source workspace intentionally remains private. Build a standalone
