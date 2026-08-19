@@ -78,3 +78,8 @@ The separate `windows-best-effort` job runs a Windows-native journal smoke
 (directory-fsync downgrade, lock fencing, rollback) and Web build. It is not a
 POSIX crash/durability equivalence claim; its first remote green run is still
 required before Windows can be marked empirically covered.
+
+The Web runtime now creates one profile `FileLock` and shares it with Journal
+and InstallService. Startup recovery, install, uninstall, activation, and the
+repair CLI acquire it for their complete mutating scope; a missing, mismatched,
+busy, or fenced lease fails closed rather than falling back to an unlocked write.

@@ -34,12 +34,16 @@
 - 在线安装只支持 npm source；GitHub-only 只浏览/侧载。
 - 目录契约嵌套 `source`，description `{zh,en}`，分页 `count + page` 对象。
 - 安全：loopback + Origin/Host + mutation token（anti-CSRF），默认禁止构建脚本。
+- profile 文本变更另有 `FileLock`：Web runtime 的 startup recovery、install、uninstall、
+  activate 以及 repair CLI 都必须持有同一把 lock；`InstallService` 拒绝缺失或与 Journal
+  不同的 lock，`LOCK_BUSY` / fencing 丢失 fail-closed。它与 HTTP mutation guard 职责不同、
+  共同防止未授权请求或并发/失租写入。
 - 安装后默认 disabled，用户显式 activate。
 - journal 文件事务只保证 profile 文本文件一致性。
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
-- 151 tests / 151 pass。
+- 159 tests / 159 pass。
 - 真实 DSH E2E PASS：install → patch disable → activate → restart → dsh-market
   路由 200。
 - `verifyInstalled` 已复核 `node_modules` manifest 的 name/version，及
@@ -93,7 +97,7 @@
 5. 8/24 后 codex 对 fc668e4..HEAD 补独立评审。
 
 ## 关键命令
-- 全部测试：`pnpm -r test`（当前 151 tests）
+- 全部测试：`pnpm -r test`（当前 159 tests）
 - 冒烟：`node scripts/dsh-smoke.mjs`
 - 真实 E2E：`node scripts/dsh-e2e-install.mjs`
 - 目标 API 无 mutation 验收：`CORDIS_RUN_API=https://<target>/api/v1 node scripts/cordis-run-contract-probe.mjs`

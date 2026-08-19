@@ -3,19 +3,33 @@
 // 预禁用/激活门禁留待 M2b；本层不执行构建脚本。
 import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { withFileLock } from '@cordis-mp/journal-core'
 import { InstallError } from './errors.mjs'
 
 const TRACKED_FILES = ['package.json', 'pnpm-lock.yaml', 'cordis.patch.yml', '.cordis-mp/state.json']
 
 export class InstallService {
-  constructor({ catalog, journal, packageManager, activation = null, inspect = null, pendingPath = null }) {
+  constructor({ catalog, journal, packageManager, activation = null, inspect = null, pendingPath = null, lock = null }) {
     this.catalog = catalog
     this.journal = journal
     this.packageManager = packageManager
     this.activation = activation
     this.inspect = inspect
     this.pendingPath = pendingPath
+    this.lock = lock
+    if (!this.lock) throw new TypeError('InstallService requires a profile FileLock')
+    if (this.journal?.lock !== this.lock) throw new TypeError('InstallService and Journal must share the profile FileLock')
     this.pending = new Map()
+  }
+
+  async #withProfileLock(operation) {
+    try {
+      return await withFileLock(this.lock, 'mutation', operation)
+    } catch (e) {
+      if (e?.code === 'LOCK_BUSY') throw new InstallError('MUTATION_BUSY', 'another profile mutation or recovery is in progress')
+      if (e?.code === 'LOCK_FENCED') throw new InstallError('MUTATION_FENCED', 'profile mutation lease was lost; no further writes were attempted')
+      throw e
+    }
   }
 
   async install({ slug, platform = 'web', confirmation = {}, signal } = {}) {
@@ -43,50 +57,56 @@ export class InstallService {
     } else {
       artifact.entryIds = fresh.entryIds || []
     }
-    const tx = await this.journal.begin(TRACKED_FILES)
-    let disable = null
-    let disableApplied = false
     try {
-      if (this.activation) {
-        disable = await this.activation.prepareDisable({ slug, artifact })
-        disable.ownedDisables = []
-        if (disable?.entryIds?.length) {
-          await this.activation.preDisable(disable.entryIds)
-          disableApplied = true
-          disable.ownedDisables = this.activation.ownedDisables || []
+      return await this.#withProfileLock(async () => {
+        const tx = await this.journal.begin(TRACKED_FILES)
+        let disable = null
+        let disableApplied = false
+        try {
+          if (this.activation) {
+            disable = await this.activation.prepareDisable({ slug, artifact })
+            disable.ownedDisables = []
+            if (disable?.entryIds?.length) {
+              await this.activation.preDisable(disable.entryIds)
+              disableApplied = true
+              disable.ownedDisables = this.activation.ownedDisables || []
+            }
+          }
+          const result = await this.packageManager.installVerifiedArtifact(artifact, signal)
+          if (result.exitCode !== 0) throw new InstallError('INSTALL_FAILED', result.stderr || `exit ${result.exitCode}`)
+          for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
+            await this.journal.adoptExternal(tx, rel, bytes)
+          }
+          const verified = await this.packageManager.verifyInstalled(artifact)
+          if (!verified) throw new InstallError('VERIFY_FAILED', 'installed package does not match verified artifact')
+          await this.journal.commitFiles(tx)
+        } catch (e) {
+          if (e.code === 'FP_INJECTED') throw e
+          if (disableApplied && disable?.entryIds?.length) { try { await this.activation.cancelDisable(disable.entryIds) } catch {} }
+          try { await this.journal.recover() } catch {}
+          throw e
         }
-      }
-      const result = await this.packageManager.installVerifiedArtifact(artifact, signal)
-      if (result.exitCode !== 0) throw new InstallError('INSTALL_FAILED', result.stderr || `exit ${result.exitCode}`)
-      for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
-        await this.journal.adoptExternal(tx, rel, bytes)
-      }
-      const verified = await this.packageManager.verifyInstalled(artifact)
-      if (!verified) throw new InstallError('VERIFY_FAILED', 'installed package does not match verified artifact')
-      await this.journal.commitFiles(tx)
-    } catch (e) {
-      if (e.code === 'FP_INJECTED') throw e
-      if (disableApplied && disable?.entryIds?.length) { try { await this.activation.cancelDisable(disable.entryIds) } catch {} }
-      try { await this.journal.recover() } catch {}
+        const pending = { v: 1, slug, artifact, entryIds: disable?.entryIds || [], ownedDisables: disable?.ownedDisables || [], entryRevision: fresh.entryRevision, tx, createdAt: Date.now() }
+        this.pending.set(slug, pending)
+        await this.#persistPending()
+        return { status: 'COMMITTED', pendingActivation: true, pending }
+      })
+    } finally {
       if (stagedPath) { try { this.inspect.cleanup?.(stagedPath) } catch {} }
-      throw e
     }
-    if (stagedPath) { try { this.inspect.cleanup?.(stagedPath) } catch {} }
-    const pending = { v: 1, slug, artifact, entryIds: disable?.entryIds || [], ownedDisables: disable?.ownedDisables || [], entryRevision: fresh.entryRevision, tx, createdAt: Date.now() }
-    this.pending.set(slug, pending)
-    await this.#persistPending()
-    return { status: 'COMMITTED', pendingActivation: true, pending }
   }
 
   async activate({ slug, signal } = {}) {
-    const pending = this.pending.get(slug)
-    if (!pending) throw new InstallError('NO_PENDING_ACTIVATION', 'no pending activation for slug: ' + slug)
-    if (!this.activation) throw new InstallError('NO_ACTIVATION_PORT', 'activation port is not configured')
-    let activationStatus = null
-    if (pending.entryIds.length) activationStatus = await this.activation.activate(pending.entryIds, { ownedSet: pending.ownedDisables })
-    this.pending.delete(slug)
-    await this.#persistPending()
-    return { status: 'ACTIVE', activationStatus }
+    return this.#withProfileLock(async () => {
+      const pending = this.pending.get(slug)
+      if (!pending) throw new InstallError('NO_PENDING_ACTIVATION', 'no pending activation for slug: ' + slug)
+      if (!this.activation) throw new InstallError('NO_ACTIVATION_PORT', 'activation port is not configured')
+      let activationStatus = null
+      if (pending.entryIds.length) activationStatus = await this.activation.activate(pending.entryIds, { ownedSet: pending.ownedDisables })
+      this.pending.delete(slug)
+      await this.#persistPending()
+      return { status: 'ACTIVE', activationStatus }
+    })
   }
 
   #pendingFile() { if (!this.pendingPath) return null; return join(this.pendingPath, 'pending-activation.json') }
@@ -109,19 +129,21 @@ export class InstallService {
     } catch { return 0 }
   }
   async uninstall({ packageName, signal } = {}) {
-    const tx = await this.journal.begin(TRACKED_FILES)
-    try {
-      const result = await this.packageManager.remove(packageName, signal)
-      if (result.exitCode !== 0) throw new InstallError('REMOVE_FAILED', result.stderr || `exit ${result.exitCode}`)
-      for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
-        await this.journal.adoptExternal(tx, rel, bytes)
+    return this.#withProfileLock(async () => {
+      const tx = await this.journal.begin(TRACKED_FILES)
+      try {
+        const result = await this.packageManager.remove(packageName, signal)
+        if (result.exitCode !== 0) throw new InstallError('REMOVE_FAILED', result.stderr || `exit ${result.exitCode}`)
+        for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
+          await this.journal.adoptExternal(tx, rel, bytes)
+        }
+        await this.journal.commitFiles(tx)
+      } catch (e) {
+        if (e.code === 'FP_INJECTED') throw e
+        try { await this.journal.recover() } catch {}
+        throw e
       }
-      await this.journal.commitFiles(tx)
-    } catch (e) {
-      if (e.code === 'FP_INJECTED') throw e
-      try { await this.journal.recover() } catch {}
-      throw e
-    }
-    return { status: 'COMMITTED', tx }
+      return { status: 'COMMITTED', tx }
+    })
   }
 }

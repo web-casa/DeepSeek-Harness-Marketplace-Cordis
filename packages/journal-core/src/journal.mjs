@@ -189,6 +189,9 @@ export class Journal {
   }
   async recover(){ return this.#recoverEntries() }
   async #recoverEntries(){
+    // Recovery can tombstone journals and sweep trash. When a lock is configured,
+    // reject an accidental unlocked entry before any of those mutations begin.
+    this.lock?.fence()
     sweepLockDebris(this.root)
     sweepTrash(this.root)
     const scan=this.scan(); const report=[]
@@ -285,6 +288,7 @@ export class Journal {
   }
 
   async archiveConflict(tx, conflicts){
+    this.lock?.fence()
     const d=join(this.root,'conflicts',tx)
     if(existsSync(join(d,'report.json'))) throw new JournalError('JOURNALLED','conflict report already exists for tx: '+tx)
     mkdirSync(join(d,'evidence'),{recursive:true,mode:0o700})

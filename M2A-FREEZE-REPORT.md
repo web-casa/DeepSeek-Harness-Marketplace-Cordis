@@ -10,7 +10,7 @@ Windows 平台为 BEST_EFFORT，需 Windows CI 实证后才可宣称 FULL。
 | G1 supersede 原子性 | **CLOSED** | 新 manifest 先落盘、旧 outcome 补写、只允许 supersede 冲突 head；两阶段间子进程崩溃测试通过 |
 | G2 祖先清理 | **CLOSED** | 三连链第一祖先 tombstone 崩溃后 recover 断链续清理，最终 resolutions 空 |
 | G3 普通恢复 | **CLOSED** | reducer 物理顺序/链校验统一；COMMITTED/ROLLED_BACK/终检；failpoint+子进程矩阵 |
-| G4 锁 | **CLOSED (FULL)** | 目录锁 mkdir 排他、heartbeat 自有目录、takeover rename CAS、fencing、Linux start ticks；Windows BEST_EFFORT |
+| G4 锁 | **CLOSED (FULL)** | 目录锁 mkdir 排他、heartbeat 自有目录、takeover rename CAS、fencing、Linux start ticks；Web/repair entrypoint 均持同一 profile lock；Windows BEST_EFFORT |
 | G5 validation gate | **CLOSED** | validator 由 ResolutionJournal 内部持有并调用，外部无法传入 evidence |
 | G6 测试矩阵自包含 | **CLOSED** | 29 场景子进程 crash 矩阵，23 个 durable failpoint 点全表覆盖（FAILPOINT-COVERAGE.md） |
 | G7 schema 完整 | **CLOSED** | 持久化文件集中校验；RecoveryReport / ResolutionOutcome 版本化并接入 |

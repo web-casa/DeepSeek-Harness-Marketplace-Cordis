@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { FileLock } from '@cordis-mp/journal-core'
 import { apply, createRuntime } from '../src/index.js'
 
 test('createRuntime wires real ports with expected paths', async () => {
@@ -11,6 +12,9 @@ test('createRuntime wires real ports with expected paths', async () => {
   assert.equal(rt.dir, dir)
   assert.equal(rt.journal.root, join(dir, '.cordis-mp'))
   assert.equal(rt.journal.profile, dir)
+  assert.equal(rt.profileLock.root, join(dir, '.cordis-mp'))
+  assert.equal(rt.journal.lock, rt.profileLock)
+  assert.equal(rt.installService.lock, rt.profileLock)
   assert.equal(rt.activation.patchPath, join(dir, 'cordis.patch.yml'))
   assert.equal(rt.inspect.cacheDir, join(dir, '.cordis-mp', 'artifacts'))
   assert.equal(rt.installService.pendingPath, join(dir, '.cordis-mp'))
@@ -45,4 +49,27 @@ test('host injects webServer and mounts catalog + mutation routes', async () => 
     ['exact', '/cordis-mp/session'],
   ])
   } finally { if (prevDir === undefined) delete process.env.CORDIS_MP_PROFILE_DIR; else process.env.CORDIS_MP_PROFILE_DIR = prevDir }
+})
+
+test('host startup fails closed while profile recovery lock is busy', async () => {
+  const prevDir = process.env.CORDIS_MP_PROFILE_DIR
+  const dir = mkdtempSync(join(tmpdir(), 'cordis-host-lock-'))
+  process.env.CORDIS_MP_PROFILE_DIR = dir
+  const lock = new FileLock(join(dir, '.cordis-mp'))
+  lock.acquire('mutation')
+  try {
+    let captured
+    apply({ inject(deps, fn) { captured = { deps, fn } } })
+    const routes = []
+    let effectDone
+    await captured.fn({
+      webServer: { register(route) { routes.push(route); return () => {} } },
+      effect(fn) { effectDone = fn() },
+    })
+    await assert.rejects(() => effectDone, e => e.code === 'LOCK_BUSY')
+    assert.deepEqual(routes, [])
+  } finally {
+    lock.release()
+    if (prevDir === undefined) delete process.env.CORDIS_MP_PROFILE_DIR; else process.env.CORDIS_MP_PROFILE_DIR = prevDir
+  }
 })

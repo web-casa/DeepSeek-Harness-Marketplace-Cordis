@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { CatalogClient } from '@cordis-mp/catalog-core'
 import { mountCatalogRoutes, mountMutationRoutes, mountSessionRoute, MutationGuard } from '@cordis-mp/web-harness'
 import { DshRunner, DshPackageManagerPort, DshActivationPort } from '@cordis-mp/dsh-runner'
-import { Journal } from '@cordis-mp/journal-core'
+import { FileLock, Journal, withFileLock } from '@cordis-mp/journal-core'
 import { InstallService } from '@cordis-mp/install-core'
 import { HttpArtifactInspector } from '@cordis-mp/inspect-core'
 
@@ -26,21 +26,25 @@ export function createRuntime({ dir = null, baseUrl = null, dshHome = null, prof
   const catalog = new CatalogClient({ baseUrl: base, snapshot: loadSnapshot() })
   const runner = new DshRunner({ dshHome: dshHome ?? process.env.DSH_HOME, profile: profile ?? process.env.CORDIS_MP_PROFILE ?? 'web' })
   const packageManager = new DshPackageManagerPort({ runner, profileDir: resolvedDir })
-  const journal = new Journal({ journalRoot: join(resolvedDir, '.cordis-mp'), profileRoot: resolvedDir })
+  const journalRoot = join(resolvedDir, '.cordis-mp')
+  const profileLock = new FileLock(journalRoot)
+  const journal = new Journal({ journalRoot, profileRoot: resolvedDir, lock: profileLock })
   const activation = new DshActivationPort({ patchPath: join(resolvedDir, 'cordis.patch.yml') })
   const inspect = new HttpArtifactInspector({ cacheDir: join(resolvedDir, '.cordis-mp', 'artifacts') })
-  const installService = new InstallService({ catalog, journal, packageManager, activation, inspect, pendingPath: join(resolvedDir, '.cordis-mp') })
-  return { dir: resolvedDir, base, catalog, journal, packageManager, activation, inspect, installService }
+  const installService = new InstallService({ catalog, journal, packageManager, activation, inspect, pendingPath: join(resolvedDir, '.cordis-mp'), lock: profileLock })
+  return { dir: resolvedDir, base, catalog, journal, profileLock, packageManager, activation, inspect, installService }
 }
 
 export function apply(ctx) {
   ctx.inject(['webServer'], (hostCtx) => {
     const webServer = hostCtx.webServer
-    const { installService, catalog, journal } = createRuntime()
+    const { installService, catalog, journal, profileLock } = createRuntime()
     const guard = new MutationGuard()
     hostCtx.effect(async () => {
-      await journal.recover()
-      await installService.recoverPending()
+      await withFileLock(profileLock, 'recovery', async () => {
+        await journal.recover()
+        await installService.recoverPending()
+      })
       const a = mountCatalogRoutes(webServer, catalog)
       const b = mountMutationRoutes(webServer, { installService, platform: 'web', guard })
       const c = mountSessionRoute(webServer, guard)

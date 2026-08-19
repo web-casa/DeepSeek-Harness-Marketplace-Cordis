@@ -138,8 +138,8 @@ var CatalogClient = class {
     try {
       res = await this.fetchImpl(key, { method: "GET", headers, redirect: "error" });
     } catch (e) {
-      const stale = this.#cached(key);
-      if (stale) return { ...stale, source: "stale-cache" };
+      const stale2 = this.#cached(key);
+      if (stale2) return { ...stale2, source: "stale-cache" };
       if (this.snapshot) return { source: "snapshot", ...this.#snapshotFor(path) };
       throw new CatalogError("NETWORK", `catalog request failed: ${e.message}`);
     }
@@ -272,670 +272,18 @@ function mountCatalogRoutes(webServer, catalog) {
 }
 
 // packages/install-core/src/install-service.mjs
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-
-// packages/install-core/src/errors.mjs
-var InstallError = class extends Error {
-  constructor(code, message) {
-    super(message);
-    this.code = code;
-  }
-};
-
-// packages/install-core/src/install-service.mjs
-var TRACKED_FILES = ["package.json", "pnpm-lock.yaml", "cordis.patch.yml", ".cordis-mp/state.json"];
-var InstallService = class {
-  constructor({ catalog, journal, packageManager, activation = null, inspect = null, pendingPath = null }) {
-    this.catalog = catalog;
-    this.journal = journal;
-    this.packageManager = packageManager;
-    this.activation = activation;
-    this.inspect = inspect;
-    this.pendingPath = pendingPath;
-    this.pending = /* @__PURE__ */ new Map();
-  }
-  async install({ slug, platform = "web", confirmation = {}, signal } = {}) {
-    const fresh = await this.catalog.fetchFresh(slug);
-    if (confirmation.entryRevision && fresh.entryRevision !== confirmation.entryRevision) {
-      throw new InstallError("STALE_CONFIRMATION", "catalog entry changed; please review again");
-    }
-    const decision = this.catalog.installability(fresh, platform);
-    if (!decision.installable) throw new InstallError("NOT_INSTALLABLE", decision.reason);
-    const artifact = {
-      packageName: fresh.source.packageName,
-      version: fresh.source.version,
-      integrity: fresh.source.integrity,
-      tarball: fresh.source.tarball,
-      registry: fresh.source.registry
-    };
-    let stagedPath = null;
-    if (this.inspect) {
-      const inspected = await this.inspect.inspectArtifact(artifact);
-      const inspectedIds = inspected?.entryIds;
-      artifact.entryIds = Array.isArray(inspectedIds) && inspectedIds.length > 0 ? inspectedIds : Array.isArray(fresh.entryIds) ? fresh.entryIds : [];
-      stagedPath = inspected?.stagedPath || null;
-    } else {
-      artifact.entryIds = fresh.entryIds || [];
-    }
-    const tx = await this.journal.begin(TRACKED_FILES);
-    let disable = null;
-    let disableApplied = false;
-    try {
-      if (this.activation) {
-        disable = await this.activation.prepareDisable({ slug, artifact });
-        disable.ownedDisables = [];
-        if (disable?.entryIds?.length) {
-          await this.activation.preDisable(disable.entryIds);
-          disableApplied = true;
-          disable.ownedDisables = this.activation.ownedDisables || [];
-        }
-      }
-      const result = await this.packageManager.installVerifiedArtifact(artifact, signal);
-      if (result.exitCode !== 0) throw new InstallError("INSTALL_FAILED", result.stderr || `exit ${result.exitCode}`);
-      for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
-        await this.journal.adoptExternal(tx, rel, bytes);
-      }
-      const verified = await this.packageManager.verifyInstalled(artifact);
-      if (!verified) throw new InstallError("VERIFY_FAILED", "installed package does not match verified artifact");
-      await this.journal.commitFiles(tx);
-    } catch (e) {
-      if (e.code === "FP_INJECTED") throw e;
-      if (disableApplied && disable?.entryIds?.length) {
-        try {
-          await this.activation.cancelDisable(disable.entryIds);
-        } catch {
-        }
-      }
-      try {
-        await this.journal.recover();
-      } catch {
-      }
-      if (stagedPath) {
-        try {
-          this.inspect.cleanup?.(stagedPath);
-        } catch {
-        }
-      }
-      throw e;
-    }
-    if (stagedPath) {
-      try {
-        this.inspect.cleanup?.(stagedPath);
-      } catch {
-      }
-    }
-    const pending = { v: 1, slug, artifact, entryIds: disable?.entryIds || [], ownedDisables: disable?.ownedDisables || [], entryRevision: fresh.entryRevision, tx, createdAt: Date.now() };
-    this.pending.set(slug, pending);
-    await this.#persistPending();
-    return { status: "COMMITTED", pendingActivation: true, pending };
-  }
-  async activate({ slug, signal } = {}) {
-    const pending = this.pending.get(slug);
-    if (!pending) throw new InstallError("NO_PENDING_ACTIVATION", "no pending activation for slug: " + slug);
-    if (!this.activation) throw new InstallError("NO_ACTIVATION_PORT", "activation port is not configured");
-    let activationStatus = null;
-    if (pending.entryIds.length) activationStatus = await this.activation.activate(pending.entryIds, { ownedSet: pending.ownedDisables });
-    this.pending.delete(slug);
-    await this.#persistPending();
-    return { status: "ACTIVE", activationStatus };
-  }
-  #pendingFile() {
-    if (!this.pendingPath) return null;
-    return join(this.pendingPath, "pending-activation.json");
-  }
-  async #persistPending() {
-    const p2 = this.#pendingFile();
-    if (!p2) return;
-    const snapshot = { v: 1, items: [...this.pending.values()] };
-    const tx = await this.journal.begin([".cordis-mp/pending-activation.json"]);
-    try {
-      await this.journal.writePresent(tx, ".cordis-mp/pending-activation.json", Buffer.from(JSON.stringify(snapshot)));
-      await this.journal.commitFiles(tx);
-    } catch (e) {
-      try {
-        await this.journal.recover();
-      } catch {
-      }
-      ;
-      throw e;
-    }
-  }
-  async recoverPending() {
-    const p2 = this.#pendingFile();
-    if (!p2 || !existsSync(p2)) return 0;
-    try {
-      const data = JSON.parse(readFileSync(p2, "utf8"));
-      const list = data?.v === 1 ? Array.isArray(data.items) ? data.items : data.slug ? [data] : [] : [];
-      for (const item of list) if (item?.slug) this.pending.set(item.slug, item);
-      return list.length;
-    } catch {
-      return 0;
-    }
-  }
-  async uninstall({ packageName, signal } = {}) {
-    const tx = await this.journal.begin(TRACKED_FILES);
-    try {
-      const result = await this.packageManager.remove(packageName, signal);
-      if (result.exitCode !== 0) throw new InstallError("REMOVE_FAILED", result.stderr || `exit ${result.exitCode}`);
-      for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
-        await this.journal.adoptExternal(tx, rel, bytes);
-      }
-      await this.journal.commitFiles(tx);
-    } catch (e) {
-      if (e.code === "FP_INJECTED") throw e;
-      try {
-        await this.journal.recover();
-      } catch {
-      }
-      throw e;
-    }
-    return { status: "COMMITTED", tx };
-  }
-};
-
-// packages/web-harness/src/mutation-routes.mjs
-function json2(res, status, body) {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-  res.end(JSON.stringify(body));
-}
-function readJsonBody(req, limit = 64 * 1024) {
-  return new Promise((resolve, reject) => {
-    let size = 0;
-    const chunks = [];
-    req.on("data", (c) => {
-      size += c.length;
-      if (size > limit) {
-        reject(Object.assign(new Error("body too large"), { code: "BODY_TOO_LARGE" }));
-        req.destroy();
-        return;
-      }
-      chunks.push(c);
-    });
-    req.on("end", () => {
-      if (!chunks.length) return resolve({});
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      } catch (e) {
-        reject(Object.assign(new Error("invalid JSON body"), { code: "BAD_JSON" }));
-      }
-    });
-    req.on("error", reject);
-  });
-}
-function createMutationHandler({ installService, platform = "web", guard = null }) {
-  return async (req, res) => {
-    const url = new URL(req.url || "/", "http://127.0.0.1");
-    if (url.pathname === "/cordis-mp/status" && req.method === "GET") return json2(res, 200, { ok: true, busy: false });
-    if (req.method !== "POST") {
-      res.writeHead(405, { allow: "POST" });
-      res.end();
-      return;
-    }
-    if (guard) {
-      const check = guard.guard(req);
-      if (!check.ok) return json2(res, check.status, { error: { code: check.reason, message: "untrusted mutation request" } });
-    }
-    try {
-      if (url.pathname === "/cordis-mp/install") {
-        const body = await readJsonBody(req);
-        const out = await installService.install({ slug: body.slug, platform, confirmation: { entryRevision: body.entryRevision } });
-        return json2(res, 200, { ok: true, ...out });
-      }
-      if (url.pathname === "/cordis-mp/uninstall") {
-        const body = await readJsonBody(req);
-        const out = await installService.uninstall({ packageName: body.name });
-        return json2(res, 200, { ok: true, ...out });
-      }
-      if (url.pathname === "/cordis-mp/activate") {
-        const body = await readJsonBody(req);
-        const out = await installService.activate({ slug: body.slug });
-        return json2(res, 200, { ok: true, ...out });
-      }
-      json2(res, 404, { error: { code: "NOT_FOUND", message: "no such route" } });
-    } catch (e) {
-      if (e instanceof InstallError) return json2(res, 400, { error: { code: e.code, message: e.message } });
-      if (e.code === "BAD_JSON" || e.code === "BODY_TOO_LARGE") return json2(res, 400, { error: { code: e.code, message: e.message } });
-      json2(res, 500, { error: { code: "INTERNAL", message: e?.message || String(e) } });
-    }
-  };
-}
-function mountMutationRoutes(webServer, opts) {
-  const handler = createMutationHandler(opts);
-  const disposers = [
-    webServer.register({ kind: "exact", path: "/cordis-mp/install", handler }),
-    webServer.register({ kind: "exact", path: "/cordis-mp/uninstall", handler }),
-    webServer.register({ kind: "exact", path: "/cordis-mp/activate", handler }),
-    webServer.register({ kind: "exact", path: "/cordis-mp/status", handler })
-  ];
-  return () => {
-    for (const d of disposers) d();
-  };
-}
-
-// packages/web-harness/src/security.mjs
-import { randomBytes } from "node:crypto";
-function normHost(hostHeader) {
-  try {
-    const u2 = new URL("http://" + (hostHeader || ""));
-    return { host: u2.hostname.toLowerCase(), port: u2.port || "80" };
-  } catch {
-    return { host: (hostHeader || "").toLowerCase(), port: "" };
-  }
-}
-function isLoopback(address) {
-  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
-}
-function sameOrigin(req) {
-  const origin = req.headers.origin;
-  if (!origin || origin === "null") return { ok: false, reason: "origin-missing-or-null" };
-  let o;
-  try {
-    o = new URL(origin);
-  } catch {
-    return { ok: false, reason: "origin-invalid" };
-  }
-  const expected = normHost(req.headers.host);
-  const actual = normHost(o.host);
-  if (actual.host !== expected.host || actual.port !== expected.port) return { ok: false, reason: "origin-host-mismatch" };
-  return { ok: true };
-}
-var MutationGuard = class {
-  constructor({ allowedHosts = ["127.0.0.1", "localhost", "[::1]"], loopbackOnly = true } = {}) {
-    this.allowedHosts = new Set(allowedHosts);
-    this.loopbackOnly = loopbackOnly;
-    this.ttlMs = 15 * 60 * 1e3;
-    this.#rotateToken();
-  }
-  #rotateToken() {
-    this.token = randomBytes(32).toString("hex");
-    this.tokenIssuedAt = Date.now();
-  }
-  #tokenExpired() {
-    return Date.now() - this.tokenIssuedAt > this.ttlMs;
-  }
-  #baseCheck(req) {
-    const reasons = [];
-    if (this.loopbackOnly && !isLoopback(req.socket?.remoteAddress)) reasons.push("peer-not-loopback");
-    const h = normHost(req.headers.host);
-    if (!this.allowedHosts.has(h.host)) reasons.push("host-not-allowed");
-    const so2 = sameOrigin(req);
-    if (!so2.ok) reasons.push(so2.reason);
-    const sf = req.headers["sec-fetch-site"];
-    if (sf && !["same-origin", "none"].includes(sf)) reasons.push("sec-fetch-site=" + sf);
-    return { ok: reasons.length === 0, reasons };
-  }
-  session(req) {
-    const base = this.#baseCheck(req);
-    if (!base.ok) return base;
-    if (this.#tokenExpired()) this.#rotateToken();
-    return { ...base, ok: true };
-  }
-  guard(req) {
-    const base = this.#baseCheck(req);
-    if (!base.ok) return { ok: false, reason: base.reasons[0], reasons: base.reasons, status: 403 };
-    if (this.#tokenExpired()) return { ok: false, reason: "token-expired", reasons: [...base.reasons, "token-expired"], status: 403 };
-    const token = req.headers["x-cordis-mp-token"];
-    if (token !== this.token) return { ok: false, reason: "bad-token", reasons: [...base.reasons, "bad-token"], status: 403 };
-    return { ok: true, reasons: base.reasons, status: 0 };
-  }
-};
-
-// packages/web-harness/src/session-routes.mjs
-function json3(res, status, body) {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-  res.end(JSON.stringify(body));
-}
-function createSessionHandler(guard = new MutationGuard()) {
-  return (req, res) => {
-    if (req.method !== "POST") {
-      res.writeHead(405, { allow: "POST" });
-      res.end();
-      return;
-    }
-    const check = guard.session(req);
-    if (!check.ok) return json3(res, 403, { error: { code: check.reason, message: "untrusted session request" } });
-    json3(res, 200, { token: guard.token, ttl: Math.floor(guard.ttlMs / 1e3), expiresAt: new Date(guard.tokenIssuedAt + guard.ttlMs).toISOString() });
-  };
-}
-function mountSessionRoute(webServer, guard = new MutationGuard()) {
-  return webServer.register({ kind: "exact", path: "/cordis-mp/session", handler: createSessionHandler(guard) });
-}
-
-// packages/dsh-runner/src/runner.mjs
-import { spawn } from "node:child_process";
-var DshRunner = class {
-  constructor({ dshBin = "dsh", dshHome = process.env.DSH_HOME, profile = "web", timeoutMs = 15 * 60 * 1e3 } = {}) {
-    this.dshBin = dshBin;
-    this.dshHome = dshHome;
-    this.profile = profile;
-    this.timeoutMs = timeoutMs;
-    this.active = null;
-  }
-  pluginArgs(profile) {
-    return ["plugin", "--profile", profile ?? this.profile];
-  }
-  #env() {
-    const env = { ...process.env, CI: "true" };
-    if (this.dshHome) env.DSH_HOME = this.dshHome;
-    return env;
-  }
-  run(args, { signal } = {}) {
-    if (this.active) return Promise.resolve({ exitCode: 409, timedOut: false, stdout: "", stderr: "another dsh operation is already running", cancelled: false, busy: true });
-    const child = spawn(this.dshBin, args, { env: this.#env(), stdio: ["ignore", "pipe", "pipe"], shell: false, detached: process.platform !== "win32" });
-    this.active = child;
-    let stdout = "", stderr = "", timedOut = false, cancelled = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      this.cancel();
-    }, this.timeoutMs);
-    child.stdout?.on("data", (d) => stdout = (stdout + d.toString()).slice(-256 * 1024));
-    child.stderr?.on("data", (d) => stderr = (stderr + d.toString()).slice(-64 * 1024));
-    const onAbort = () => {
-      cancelled = true;
-      this.cancel();
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
-    return new Promise((resolve) => {
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
-        this.active = null;
-        resolve({ exitCode: 127, timedOut, stdout, stderr: `${stderr}
-${err.message}`, cancelled });
-      });
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
-        this.active = null;
-        resolve({ exitCode: code, timedOut, stdout, stderr, cancelled });
-      });
-    });
-  }
-  cancel() {
-    const child = this.active;
-    if (!child) return false;
-    if (process.platform === "win32") {
-      try {
-        spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
-      } catch {
-        child.kill();
-      }
-    } else {
-      try {
-        process.kill(-child.pid, "SIGTERM");
-      } catch {
-        child.kill();
-      }
-    }
-    return true;
-  }
-  async probe() {
-    const r = await this.run(["--version"], { signal: AbortSignal.timeout(1e4) });
-    return r.exitCode === 0 && !r.timedOut;
-  }
-};
-
-// packages/dsh-runner/src/package-manager.mjs
-import { existsSync as existsSync2, lstatSync, readFileSync as readFileSync2 } from "node:fs";
-import { join as join2 } from "node:path";
-var TRACKED = ["package.json", "pnpm-lock.yaml", "cordis.patch.yml", ".cordis-mp/state.json"];
-var MAX_LOCKFILE_BYTES = 16 * 1024 * 1024;
-function unquoteYamlScalar(value) {
-  const text = String(value || "").trim();
-  if (text.length >= 2 && text.startsWith("'") && text.endsWith("'")) return text.slice(1, -1).replace(/''/g, "'");
-  if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
-    try {
-      return JSON.parse(text);
-    } catch {
-      return text.slice(1, -1);
-    }
-  }
-  return text;
-}
-function isArtifactPackageKey(key, artifact) {
-  const id = `${artifact.packageName}@${artifact.version}`;
-  return key === id || key === `/${id}` || key.startsWith(`${id}(`) || key.startsWith(`/${id}(`);
-}
-function inlineIntegrity(resolution) {
-  const match = /(?:^|,)\s*integrity:\s*([^,}]+)/.exec(resolution);
-  return match ? unquoteYamlScalar(match[1]) : null;
-}
-function pnpmLockRecords(lockfile, artifact) {
-  let inPackages = false;
-  let current = null;
-  const records = [];
-  const finish = () => {
-    if (current) records.push(current);
-    current = null;
-  };
-  for (const line of lockfile.split(/\r?\n/)) {
-    if (!inPackages) {
-      if (/^packages:\s*(?:#.*)?$/.test(line)) inPackages = true;
-      continue;
-    }
-    if (/^[^\s#]/.test(line)) break;
-    const entry = /^ {2}([^\s].*?):\s*(?:#.*)?$/.exec(line);
-    if (entry) {
-      finish();
-      const key = unquoteYamlScalar(entry[1]);
-      if (isArtifactPackageKey(key, artifact)) current = { integrity: null, resolutionIndent: null };
-      continue;
-    }
-    if (!current) continue;
-    const flowResolution = /^ {4}resolution:\s*\{(.*)\}\s*(?:#.*)?$/.exec(line);
-    if (flowResolution) {
-      current.integrity = inlineIntegrity(flowResolution[1]);
-      current.resolutionIndent = null;
-      continue;
-    }
-    if (/^ {4}resolution:\s*(?:#.*)?$/.test(line)) {
-      current.resolutionIndent = 4;
-      continue;
-    }
-    if (current.resolutionIndent === 4) {
-      const nestedIntegrity = /^ {6}integrity:\s*(.*?)\s*(?:#.*)?$/.exec(line);
-      if (nestedIntegrity) current.integrity = unquoteYamlScalar(nestedIntegrity[1]);
-    }
-  }
-  finish();
-  return records;
-}
-function lockfileIntegrityMatches(lockPath, artifact) {
-  if (typeof artifact?.integrity !== "string" || artifact.integrity.length === 0) return false;
-  try {
-    const stat = lstatSync(lockPath);
-    if (!stat.isFile() || stat.size > MAX_LOCKFILE_BYTES) return false;
-    const records = pnpmLockRecords(readFileSync2(lockPath, "utf8"), artifact);
-    return records.length > 0 && records.every((record) => record.integrity === artifact.integrity);
-  } catch {
-    return false;
-  }
-}
-var DshPackageManagerPort = class {
-  constructor({ runner, profileDir, platform = "web" }) {
-    this.runner = runner;
-    this.profileDir = profileDir;
-    this.platform = platform;
-  }
-  #spec(artifact) {
-    return `${artifact.packageName}@${artifact.version}`;
-  }
-  #profileFiles() {
-    const files = {};
-    for (const rel of TRACKED) {
-      const p2 = join2(this.profileDir, rel);
-      if (existsSync2(p2)) files[rel] = readFileSync2(p2);
-    }
-    return files;
-  }
-  async installVerifiedArtifact(artifact, signal) {
-    const result = await this.runner.run([...this.runner.pluginArgs(), "add", this.#spec(artifact), "--ignore-scripts"], { signal });
-    return { ...result, profileFiles: result.exitCode === 0 ? this.#profileFiles() : {} };
-  }
-  async remove(packageName, signal) {
-    const result = await this.runner.run([...this.runner.pluginArgs(), "remove", packageName], { signal });
-    return { ...result, profileFiles: result.exitCode === 0 ? this.#profileFiles() : {} };
-  }
-  async verifyInstalled(artifact) {
-    const p2 = join2(this.profileDir, "node_modules", artifact.packageName, "package.json");
-    try {
-      const manifest = JSON.parse(readFileSync2(p2, "utf8"));
-      if (manifest.name !== artifact.packageName || manifest.version !== artifact.version) return false;
-      return lockfileIntegrityMatches(join2(this.profileDir, "pnpm-lock.yaml"), artifact);
-    } catch {
-      return false;
-    }
-  }
-};
-
-// packages/dsh-runner/src/activation.mjs
-import { readFileSync as readFileSync3, writeFileSync, mkdirSync, renameSync, openSync, fsyncSync, closeSync } from "node:fs";
-import { dirname, join as join3 } from "node:path";
-import { randomBytes as randomBytes2 } from "node:crypto";
-var ROW_ID_RE = /^[A-Za-z0-9_.-]+$/;
-var DshActivationPort = class {
-  constructor({ patchPath }) {
-    this.patchPath = patchPath;
-    this.owned = /* @__PURE__ */ new Set();
-  }
-  get ownedDisables() {
-    return [...this.owned];
-  }
-  #text() {
-    try {
-      return readFileSync3(this.patchPath, "utf8");
-    } catch {
-      return "[]\n";
-    }
-  }
-  #save(text) {
-    const dir = dirname(this.patchPath);
-    mkdirSync(dir, { recursive: true, mode: 448 });
-    const tmp = join3(dir, `.cordis.patch.${randomBytes2(6).toString("hex")}`);
-    const fd = openSync(tmp, "wx", 384);
-    try {
-      writeFileSync(fd, text);
-    } finally {
-      closeSync(fd);
-    }
-    const r = openSync(tmp, "r");
-    try {
-      fsyncSync(r);
-    } finally {
-      closeSync(r);
-    }
-    renameSync(tmp, this.patchPath);
-    const d = openSync(dir, "r");
-    try {
-      fsyncSync(d);
-    } finally {
-      closeSync(d);
-    }
-  }
-  readState() {
-    const lines = this.#text().split(/\r?\n/);
-    const disables = [];
-    const forced = [];
-    const inserts = [];
-    let inInsert = false;
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i] ?? "";
-      if (/^- insert:\s*$/.test(line)) {
-        inInsert = true;
-        continue;
-      }
-      if (/^- /.test(line)) inInsert = false;
-      if (inInsert) {
-        const m2 = /^ {4}- id: ([A-Za-z0-9_.-]+)/.exec(line);
-        if (m2) inserts.push(m2[1]);
-        continue;
-      }
-      const row = /^- id: ([A-Za-z0-9_.-]+)\s*$/.exec(line);
-      if (!row) continue;
-      const next = lines[i + 1] ?? "";
-      if (/^ {2}disabled: true\s*$/.test(next)) disables.push(row[1]);
-      else if (/^ {2}disabled: false\s*$/.test(next)) forced.push(row[1]);
-    }
-    return { disables, forced, inserts };
-  }
-  preDisable(entryIds) {
-    const ids = [...new Set(entryIds)].filter((id) => ROW_ID_RE.test(id));
-    if (ids.length === 0) return 0;
-    let text = this.#text().replace(/\n?$/, "\n");
-    const lines = text.split("\n");
-    const emptyIdx = lines.findIndex((l) => /^\s*\[\]\s*$/.test(l));
-    if (emptyIdx !== -1) lines.splice(emptyIdx, 1);
-    let changed = 0;
-    for (const id of ids) {
-      let found = false;
-      for (let i = 0; i < lines.length - 1; i++) {
-        const m2 = /^- id: ([A-Za-z0-9_.-]+)\s*$/.exec(lines[i]);
-        if (!m2 || m2[1] !== id) continue;
-        found = true;
-        if (/^ {2}disabled: true\s*$/.test(lines[i + 1] ?? "")) break;
-        if (/^ {2}disabled: false\s*$/.test(lines[i + 1] ?? "")) {
-          lines[i + 1] = "  disabled: true";
-          changed++;
-          this.owned.add(id);
-        }
-        break;
-      }
-      if (!found) {
-        lines.push(`- id: ${id}`, "  disabled: true");
-        changed++;
-        this.owned.add(id);
-      }
-    }
-    if (changed > 0) this.#save(lines.join("\n"));
-    return changed;
-  }
-  activate(entryIds, { ownedOnly = false, ownedSet = null } = {}) {
-    let ids = new Set(entryIds.filter((id) => ROW_ID_RE.test(id)));
-    if (ownedOnly) ids = new Set([...ids].filter((id) => this.owned.has(id)));
-    if (Array.isArray(ownedSet)) ids = new Set([...ids].filter((id) => ownedSet.includes(id)));
-    if (ids.size === 0) return 0;
-    const lines = this.#text().split("\n");
-    const out = [];
-    let removed = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const m2 = /^- id: ([A-Za-z0-9_.-]+)\s*$/.exec(lines[i]);
-      if (m2 && ids.has(m2[1]) && /^ {2}disabled: true\s*$/.test(lines[i + 1] ?? "")) {
-        i++;
-        removed++;
-        this.owned.delete(m2[1]);
-        continue;
-      }
-      out.push(lines[i]);
-    }
-    if (removed > 0) {
-      const hasRows = out.some((l) => /^\s*- /.test(l));
-      if (!hasRows) {
-        let idx = 0;
-        while (idx < out.length && (out[idx].trim() === "" || out[idx].trim().startsWith("#"))) idx++;
-        out.splice(idx, 0, "[]");
-      }
-      this.#save(out.join("\n"));
-    }
-    return removed;
-  }
-  async prepareDisable({ artifact }) {
-    return { entryIds: artifact?.entryIds || [] };
-  }
-  async cancelDisable(entryIds) {
-    return this.activate(entryIds, { ownedOnly: true });
-  }
-};
+import { readFileSync as readFileSync5, existsSync as existsSync5 } from "node:fs";
+import { join as join4 } from "node:path";
 
 // packages/journal-core/src/journal.mjs
-import { existsSync as existsSync6, readFileSync as readFileSync7, mkdirSync as mkdirSync4, readdirSync as readdirSync3, statSync as statSync4, copyFileSync } from "node:fs";
-import { join as join6, dirname as dirname3 } from "node:path";
-import { randomBytes as randomBytes5 } from "node:crypto";
+import { existsSync as existsSync4, readFileSync as readFileSync4, mkdirSync as mkdirSync3, readdirSync as readdirSync3, statSync as statSync4, copyFileSync } from "node:fs";
+import { join as join3, dirname as dirname2 } from "node:path";
+import { randomBytes as randomBytes3 } from "node:crypto";
 
 // packages/journal-core/src/durable.mjs
-import { openSync as openSync2, writeFileSync as writeFileSync2, fsyncSync as fsyncSync2, closeSync as closeSync2, renameSync as renameSync2, unlinkSync, mkdirSync as mkdirSync2, existsSync as existsSync3, appendFileSync, readFileSync as readFileSync4, chmodSync, linkSync, rmSync, readdirSync, statSync } from "node:fs";
-import { join as join4, dirname as dirname2, basename } from "node:path";
-import { randomBytes as randomBytes3 } from "node:crypto";
+import { openSync, writeFileSync, fsyncSync, closeSync, renameSync, unlinkSync, mkdirSync, existsSync, appendFileSync, readFileSync, chmodSync, linkSync, rmSync, readdirSync, statSync } from "node:fs";
+import { join, dirname, basename } from "node:path";
+import { randomBytes } from "node:crypto";
 
 // packages/journal-core/src/failpoints.mjs
 var registry = /* @__PURE__ */ new Map();
@@ -951,11 +299,11 @@ function failpoint(name2, ctx = {}) {
 var fsyncWarning = false;
 function fsyncDir(dir) {
   try {
-    const fd = openSync2(dir, "r");
+    const fd = openSync(dir, "r");
     try {
-      fsyncSync2(fd);
+      fsyncSync(fd);
     } finally {
-      closeSync2(fd);
+      closeSync(fd);
     }
   } catch (e) {
     if (process.platform === "win32" && ["EISDIR", "EPERM", "EINVAL", "ENOTSUP"].includes(e.code)) {
@@ -970,20 +318,20 @@ function fsyncDir(dir) {
 }
 function atomicFile(path, content, { mode = 384, exclusive = false } = {}) {
   failpoint("atomicFile:before", { path, exclusive });
-  mkdirSync2(dirname2(path), { recursive: true, mode: 448 });
-  const tmp = join4(dirname2(path), `.tmp-${randomBytes3(6).toString("hex")}`);
-  const fd = openSync2(tmp, "wx", mode);
+  mkdirSync(dirname(path), { recursive: true, mode: 448 });
+  const tmp = join(dirname(path), `.tmp-${randomBytes(6).toString("hex")}`);
+  const fd = openSync(tmp, "wx", mode);
   try {
-    writeFileSync2(fd, content);
+    writeFileSync(fd, content);
   } finally {
-    closeSync2(fd);
+    closeSync(fd);
   }
   chmodSync(tmp, mode);
-  const fd2 = openSync2(tmp, "r");
+  const fd2 = openSync(tmp, "r");
   try {
-    fsyncSync2(fd2);
+    fsyncSync(fd2);
   } finally {
-    closeSync2(fd2);
+    closeSync(fd2);
   }
   failpoint("atomicFile:after-write", { path, exclusive });
   if (exclusive) {
@@ -1003,31 +351,31 @@ function atomicFile(path, content, { mode = 384, exclusive = false } = {}) {
     }
     failpoint("atomicFile:after-publish", { path, exclusive });
   } else {
-    renameSync2(tmp, path);
+    renameSync(tmp, path);
     failpoint("atomicFile:after-publish", { path, exclusive });
   }
   failpoint("atomicFile:before-dirfsync", { path, exclusive });
-  fsyncDir(dirname2(path));
+  fsyncDir(dirname(path));
   failpoint("atomicFile:after-dirfsync", { path, exclusive });
 }
 function appendRecord(path, line) {
   failpoint("appendRecord:before", { path });
-  mkdirSync2(dirname2(path), { recursive: true, mode: 448 });
-  const fd = openSync2(path, "a", 384);
+  mkdirSync(dirname(path), { recursive: true, mode: 448 });
+  const fd = openSync(path, "a", 384);
   try {
-    writeFileSync2(fd, line + "\n");
+    writeFileSync(fd, line + "\n");
   } finally {
-    closeSync2(fd);
+    closeSync(fd);
   }
   failpoint("appendRecord:after-write", { path });
-  const fd2 = openSync2(path, "r");
+  const fd2 = openSync(path, "r");
   try {
-    fsyncSync2(fd2);
+    fsyncSync(fd2);
   } finally {
-    closeSync2(fd2);
+    closeSync(fd2);
   }
   failpoint("appendRecord:before-dirfsync", { path });
-  fsyncDir(dirname2(path));
+  fsyncDir(dirname(path));
   failpoint("appendRecord:after-dirfsync", { path });
 }
 function marker(path) {
@@ -1037,38 +385,38 @@ function marker(path) {
 }
 function replaceTarget(path, data, mode = 384) {
   failpoint("replaceTarget:before", { path });
-  mkdirSync2(dirname2(path), { recursive: true, mode: 448 });
-  const tmp = join4(dirname2(path), `.tmp-target-${randomBytes3(6).toString("hex")}`);
-  const fd = openSync2(tmp, "wx", mode);
+  mkdirSync(dirname(path), { recursive: true, mode: 448 });
+  const tmp = join(dirname(path), `.tmp-target-${randomBytes(6).toString("hex")}`);
+  const fd = openSync(tmp, "wx", mode);
   try {
-    writeFileSync2(fd, data);
+    writeFileSync(fd, data);
   } finally {
-    closeSync2(fd);
+    closeSync(fd);
   }
   failpoint("replaceTarget:after-write", { path });
   chmodSync(tmp, mode);
-  const fd2 = openSync2(tmp, "r");
+  const fd2 = openSync(tmp, "r");
   try {
-    fsyncSync2(fd2);
+    fsyncSync(fd2);
   } finally {
-    closeSync2(fd2);
+    closeSync(fd2);
   }
   failpoint("replaceTarget:before-rename", { path });
-  renameSync2(tmp, path);
+  renameSync(tmp, path);
   failpoint("replaceTarget:after-rename", { path });
-  fsyncDir(dirname2(path));
+  fsyncDir(dirname(path));
   failpoint("replaceTarget:after-dirfsync", { path });
 }
 function unlinkTargetDurable(path) {
   failpoint("unlinkTarget:before", { path });
   unlinkSync(path);
   failpoint("unlinkTarget:after-unlink", { path });
-  fsyncDir(dirname2(path));
+  fsyncDir(dirname(path));
   failpoint("unlinkTarget:after-dirfsync", { path });
 }
 function readJsonIfExists(path) {
   try {
-    return JSON.parse(readFileSync4(path, "utf8"));
+    return JSON.parse(readFileSync(path, "utf8"));
   } catch (e) {
     if (e.code === "ENOENT") return null;
     throw e;
@@ -1076,23 +424,23 @@ function readJsonIfExists(path) {
 }
 function tombstone(kind, dir) {
   failpoint("tombstone:before", { kind, dir });
-  if (!existsSync3(dir)) return;
-  const trashRoot = join4(dirname2(dirname2(dir)), "trash");
-  mkdirSync2(trashRoot, { recursive: true, mode: 448 });
-  const target = join4(trashRoot, `${kind}-${basename(dir)}-${randomBytes3(6).toString("hex")}`);
-  renameSync2(dir, target);
+  if (!existsSync(dir)) return;
+  const trashRoot = join(dirname(dirname(dir)), "trash");
+  mkdirSync(trashRoot, { recursive: true, mode: 448 });
+  const target = join(trashRoot, `${kind}-${basename(dir)}-${randomBytes(6).toString("hex")}`);
+  renameSync(dir, target);
   failpoint("tombstone:after-rename", { kind, dir, target });
-  fsyncDir(dirname2(dir));
+  fsyncDir(dirname(dir));
   failpoint("tombstone:after-src-fsync", { kind, dir, target });
   fsyncDir(trashRoot);
   failpoint("tombstone:after-dirfsync", { kind, dir, target });
   rmSync(target, { recursive: true, force: true });
 }
 function sweepTrash(root, { olderThanMs = 60 * 60 * 1e3 } = {}) {
-  const trashRoot = join4(root, "trash");
-  if (!existsSync3(trashRoot)) return;
+  const trashRoot = join(root, "trash");
+  if (!existsSync(trashRoot)) return;
   for (const name2 of readdirSync(trashRoot)) {
-    const p2 = join4(trashRoot, name2);
+    const p2 = join(trashRoot, name2);
     try {
       if (Date.now() - statSync(p2).mtimeMs < olderThanMs) continue;
       rmSync(p2, { recursive: true, force: true });
@@ -1102,15 +450,210 @@ function sweepTrash(root, { olderThanMs = 60 * 60 * 1e3 } = {}) {
 }
 
 // packages/journal-core/src/lock.mjs
-import { mkdirSync as mkdirSync3, readFileSync as readFileSync5, renameSync as renameSync3, rmSync as rmSync2, existsSync as existsSync4, readdirSync as readdirSync2, statSync as statSync2 } from "node:fs";
-import { join as join5 } from "node:path";
-import { randomBytes as randomBytes4 } from "node:crypto";
-var PROCESS_TOKEN = randomBytes4(8).toString("hex");
+import { mkdirSync as mkdirSync2, readFileSync as readFileSync2, renameSync as renameSync2, rmSync as rmSync2, existsSync as existsSync2, readdirSync as readdirSync2, statSync as statSync2 } from "node:fs";
+import { join as join2 } from "node:path";
+import { randomBytes as randomBytes2 } from "node:crypto";
+var STALE_MS = 3e4;
+var PROCESS_TOKEN = randomBytes2(8).toString("hex");
+var LockBusy = class extends Error {
+  constructor(reason = "lock busy") {
+    super(reason);
+    this.code = "LOCK_BUSY";
+  }
+};
+var LockFenced = class extends Error {
+  constructor() {
+    super("lock token mismatch");
+    this.code = "LOCK_FENCED";
+  }
+};
+function processStartTicks(pid) {
+  if (process.platform !== "linux") return null;
+  try {
+    const stat = readFileSync2(`/proc/${pid}/stat`, "utf8");
+    const close = stat.lastIndexOf(")");
+    return Number(stat.slice(close + 1).trim().split(/\s+/)[19]);
+  } catch {
+    return null;
+  }
+}
+function ownerAlive(rec) {
+  if (!rec || !Number.isInteger(rec.pid)) return false;
+  try {
+    process.kill(rec.pid, 0);
+  } catch {
+    return false;
+  }
+  if (process.platform === "linux" && Number.isInteger(rec.processStartTicks)) {
+    const ticks = processStartTicks(rec.pid);
+    if (ticks !== null && ticks !== rec.processStartTicks) return false;
+  }
+  return true;
+}
+function stale(rec) {
+  return Date.now() - (rec.heartbeatAt ?? 0) > STALE_MS;
+}
+var FileLock = class {
+  constructor(root) {
+    this.root = root;
+    this.dir = join2(root, "lock");
+    this.ownerPath = join2(this.dir, "owner.json");
+    this.hbPath = join2(this.dir, "heartbeat.json");
+    this.record = null;
+  }
+  #readOwner(path) {
+    try {
+      return JSON.parse(readFileSync2(path, "utf8"));
+    } catch {
+      return null;
+    }
+  }
+  #stolenState() {
+    const names = readdirSync2(this.root).filter((n) => n.startsWith("lock.stolen-"));
+    if (names.length === 0) return null;
+    let newest = null;
+    for (const name2 of names) {
+      const p2 = join2(this.root, name2);
+      try {
+        const st2 = statSync2(p2);
+        if (!newest || st2.mtimeMs > newest.mtimeMs) newest = { name: name2, path: p2, mtimeMs: st2.mtimeMs, owner: this.#readOwner(join2(p2, "owner.json")) };
+      } catch {
+      }
+    }
+    return newest;
+  }
+  acquire(scope = "mutation", { wait = false } = {}) {
+    mkdirSync2(this.root, { recursive: true, mode: 448 });
+    const rec = {
+      owner: "journal-core",
+      scope,
+      bootId: randomBytes2(8).toString("hex"),
+      pid: process.pid,
+      processStartToken: PROCESS_TOKEN,
+      ownerToken: randomBytes2(16).toString("hex"),
+      epoch: 1,
+      acquiredAt: Date.now(),
+      heartbeatAt: Date.now(),
+      processStartTicks: processStartTicks(process.pid) ?? void 0
+    };
+    for (; ; ) {
+      const stolen = this.#stolenState();
+      if (stolen) {
+        const age = Date.now() - stolen.mtimeMs;
+        if (age < 5e3) {
+          if (!existsSync2(this.dir)) {
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+            continue;
+          }
+        }
+        if (!existsSync2(this.dir) && stolen.owner && !ownerAlive(stolen.owner) && stale(stolen.owner)) {
+          rec.epoch = (stolen.owner.epoch ?? 0) + 1;
+        }
+      }
+      try {
+        mkdirSync2(this.dir, { mode: 448 });
+        const gapStolen = this.#stolenState();
+        if (gapStolen?.owner && !ownerAlive(gapStolen.owner) && stale(gapStolen.owner)) {
+          rec.epoch = (gapStolen.owner.epoch ?? 0) + 1;
+        }
+        try {
+          atomicFile(this.ownerPath, JSON.stringify(rec), { mode: 384 });
+          atomicFile(this.hbPath, JSON.stringify({ heartbeatAt: rec.heartbeatAt }), { mode: 384 });
+          this.record = rec;
+          return rec;
+        } catch (inner) {
+          try {
+            rmSync2(this.dir, { recursive: true, force: true });
+          } catch {
+          }
+          throw inner;
+        }
+      } catch (e) {
+        if (e.code !== "EEXIST") throw e;
+        let cur = this.#readOwner(this.ownerPath);
+        if (!cur) throw new LockBusy("lock dir exists but owner unreadable");
+        if (ownerAlive(cur) || !stale(cur)) {
+          if (!wait) throw new LockBusy("owner alive or heartbeat fresh");
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+          continue;
+        }
+        const tag = randomBytes2(6).toString("hex");
+        const stolen2 = this.dir + ".stolen-" + tag;
+        try {
+          renameSync2(this.dir, stolen2);
+        } catch (e2) {
+          if (e2.code === "ENOENT") continue;
+          throw e2;
+        }
+        const stolenOwner = this.#readOwner(join2(stolen2, "owner.json"));
+        if (!stolenOwner || stolenOwner.ownerToken !== cur.ownerToken || stolenOwner.processStartToken !== cur.processStartToken) {
+          try {
+            renameSync2(stolen2, this.dir);
+          } catch {
+          }
+          ;
+          throw new LockBusy("stolen owner changed");
+        }
+        if (ownerAlive(stolenOwner) || !stale(stolenOwner)) {
+          if (!existsSync2(this.dir)) try {
+            renameSync2(stolen2, this.dir);
+          } catch {
+          }
+          throw new LockBusy("owner revived or heartbeat fresh");
+        }
+        rec.epoch = (cur.epoch ?? 0) + 1;
+        try {
+          mkdirSync2(this.dir, { mode: 448 });
+        } catch (e3) {
+          if (e3.code === "EEXIST") throw new LockBusy("cas lost to another takeover");
+          throw e3;
+        }
+        atomicFile(this.ownerPath, JSON.stringify(rec), { mode: 384 });
+        atomicFile(this.hbPath, JSON.stringify({ heartbeatAt: rec.heartbeatAt }), { mode: 384 });
+        this.record = rec;
+        return rec;
+      }
+    }
+  }
+  heartbeat() {
+    if (!this.record) throw new LockBusy("no lease");
+    this.fence();
+    const rec = { ...this.record, heartbeatAt: Date.now() };
+    atomicFile(this.ownerPath, JSON.stringify(rec), { mode: 384 });
+    atomicFile(this.hbPath, JSON.stringify({ heartbeatAt: rec.heartbeatAt }), { mode: 384 });
+    this.record = rec;
+  }
+  fence() {
+    if (!this.record) throw new LockBusy("no lease");
+    const cur = this.#readOwner(this.ownerPath);
+    if (!cur || cur.ownerToken !== this.record.ownerToken || cur.epoch !== this.record.epoch) throw new LockFenced();
+  }
+  release() {
+    if (!this.record) return;
+    const cur = this.#readOwner(this.ownerPath);
+    if (cur && cur.ownerToken === this.record.ownerToken) {
+      rmSync2(this.dir, { recursive: true, force: true });
+      fsyncDir(this.root);
+    }
+    this.record = null;
+  }
+};
+async function withFileLock(lock, scope, operation) {
+  if (!lock || typeof lock.acquire !== "function" || typeof lock.release !== "function") {
+    throw new TypeError("a FileLock is required for a mutating operation");
+  }
+  lock.acquire(scope);
+  try {
+    return await operation();
+  } finally {
+    lock.release();
+  }
+}
 function sweepLockDebris(root, { olderThanMs = 6e4 } = {}) {
-  if (!existsSync4(root)) return;
+  if (!existsSync2(root)) return;
   for (const name2 of readdirSync2(root)) {
     if (!name2.startsWith("lock.stolen-")) continue;
-    const p2 = join5(root, name2);
+    const p2 = join2(root, name2);
     try {
       if (!statSync2(p2).isDirectory()) continue;
       if (Date.now() - statSync2(p2).mtimeMs > olderThanMs) rmSync2(p2, { recursive: true, force: true });
@@ -1121,11 +664,11 @@ function sweepLockDebris(root, { olderThanMs = 6e4 } = {}) {
 
 // packages/journal-core/src/state.mjs
 import { createHash } from "node:crypto";
-import { existsSync as existsSync5, readFileSync as readFileSync6, statSync as statSync3 } from "node:fs";
+import { existsSync as existsSync3, readFileSync as readFileSync3, statSync as statSync3 } from "node:fs";
 var sha256 = (data) => "sha256:" + createHash("sha256").update(data).digest("hex");
 function fileState(path) {
-  if (!existsSync5(path)) return { exists: false, hash: null };
-  return { exists: true, hash: sha256(readFileSync6(path)) };
+  if (!existsSync3(path)) return { exists: false, hash: null };
+  return { exists: true, hash: sha256(readFileSync3(path)) };
 }
 function targetKey(rel) {
   return createHash("sha256").update(rel).digest("hex");
@@ -1331,45 +874,45 @@ var Journal = class {
   constructor({ journalRoot, profileRoot, lock = null }) {
     this.root = journalRoot;
     this.profile = profileRoot;
-    this.txDir = join6(journalRoot, "journal");
+    this.txDir = join3(journalRoot, "journal");
     this.lock = lock;
   }
   #assertRel(rel) {
     if (!ALLOWED.has(rel)) throw new JournalError("BAD_TARGET", "target not allowed: " + rel);
   }
   #txDir(tx) {
-    return join6(this.txDir, tx);
+    return join3(this.txDir, tx);
   }
   #profilePath(rel) {
-    return join6(this.profile, rel);
+    return join3(this.profile, rel);
   }
   async begin(targets) {
     if (!Array.isArray(targets) || targets.length === 0) throw new JournalError("BAD_TARGETS", "targets must not be empty");
     this.lock?.fence();
     const active = this.scan().txs.filter((t) => !t.committed && !(t.outcome && t.outcome.outcome === "ROLLED_BACK"));
     if (active.length > 0) throw new JournalError("ACTIVE_TX", "an active journal transaction already exists: " + active.map((t) => t.txid).join(","));
-    const txid = randomBytes5(6).toString("hex");
+    const txid = randomBytes3(6).toString("hex");
     const manifest = { v: 1, txid, state: "PREPARING", createdAt: Date.now(), targets: {} };
     const dir = this.#txDir(txid);
-    mkdirSync4(dir, { recursive: true, mode: 448 });
+    mkdirSync3(dir, { recursive: true, mode: 448 });
     for (const rel of targets) {
       this.#assertRel(rel);
       const p2 = this.#profilePath(rel);
       const st2 = fileState(p2);
       const baseline = { state: st2 };
       if (st2.exists) {
-        baseline.length = readFileSync7(p2).length;
+        baseline.length = readFileSync4(p2).length;
         baseline.mode = modeOf(p2) || "0644";
-        atomicFile(join6(dir, "snapshots", targetKey(rel) + ".bin"), readFileSync7(p2), { mode: 384 });
+        atomicFile(join3(dir, "snapshots", targetKey(rel) + ".bin"), readFileSync4(p2), { mode: 384 });
       }
       manifest.targets[rel] = baseline;
     }
     manifest.state = "PREPARED";
-    atomicFile(join6(dir, "manifest.json"), JSON.stringify(manifest, null, 2), { mode: 384 });
+    atomicFile(join3(dir, "manifest.json"), JSON.stringify(manifest, null, 2), { mode: 384 });
     return txid;
   }
   #loadManifest(tx) {
-    const raw = readJsonIfExists(join6(this.#txDir(tx), "manifest.json"));
+    const raw = readJsonIfExists(join3(this.#txDir(tx), "manifest.json"));
     if (!raw) throw new JournalError("NO_MANIFEST", "no manifest");
     try {
       return validateManifest(raw);
@@ -1378,11 +921,11 @@ var Journal = class {
     }
   }
   #opsPath(tx, rel) {
-    return join6(this.#txDir(tx), "ops", targetKey(rel) + ".jsonl");
+    return join3(this.#txDir(tx), "ops", targetKey(rel) + ".jsonl");
   }
   #parseTarget(tx, rel) {
     const p2 = this.#opsPath(tx, rel);
-    const lines = existsSync6(p2) ? readFileSync7(p2, "utf8").split("\n") : [];
+    const lines = existsSync4(p2) ? readFileSync4(p2, "utf8").split("\n") : [];
     try {
       const parsed = parseOpLog(lines, { txid: tx, rel });
       if (parsed.truncatedTail) console.warn(`[journal-core] ignoring truncated op tail for tx=${tx} rel=${rel}`);
@@ -1467,11 +1010,11 @@ var Journal = class {
       if (current.hash !== v2.owned.hash || current.exists !== v2.owned.exists) throw new JournalError("CONFLICT", "final check failed: " + rel);
     }
     this.lock?.fence();
-    marker(join6(this.#txDir(tx), "COMMITTED"));
+    marker(join3(this.#txDir(tx), "COMMITTED"));
     m2.state = "FILE_COMMITTED";
-    atomicFile(join6(this.#txDir(tx), "manifest.json"), JSON.stringify(m2, null, 2), { mode: 384 });
+    atomicFile(join3(this.#txDir(tx), "manifest.json"), JSON.stringify(m2, null, 2), { mode: 384 });
     this.lock?.fence();
-    atomicFile(join6(this.#txDir(tx), "OUTCOME.json"), JSON.stringify({ v: 1, txid: tx, outcome: "COMMITTED" }), { mode: 384 });
+    atomicFile(join3(this.#txDir(tx), "OUTCOME.json"), JSON.stringify({ v: 1, txid: tx, outcome: "COMMITTED" }), { mode: 384 });
   }
   async adoptExternal(tx, rel, expectedBytes = null) {
     this.lock?.fence();
@@ -1484,7 +1027,7 @@ var Journal = class {
     }
     if (current.exists === baseline.exists && current.hash === baseline.hash) return false;
     const mode = current.exists ? modeOf(this.#profilePath(rel)) || "0644" : void 0;
-    const length = current.exists ? readFileSync7(this.#profilePath(rel)).length : void 0;
+    const length = current.exists ? readFileSync4(this.#profilePath(rel)).length : void 0;
     const op = this.#beginOp(tx, rel, { kind: "FORWARD", expected: baseline, next: current, mode, length });
     this.#appendPhase(tx, rel, op, "CONFIRMED");
     return true;
@@ -1496,32 +1039,32 @@ var Journal = class {
     const b2 = this.getBaseline(tx)[rel];
     if (!b2) return null;
     if (!b2.state.exists) return null;
-    return readFileSync7(join6(this.#txDir(tx), "snapshots", targetKey(rel) + ".bin"));
+    return readFileSync4(join3(this.#txDir(tx), "snapshots", targetKey(rel) + ".bin"));
   }
   txExists(tx) {
-    return existsSync6(join6(this.#txDir(tx), "manifest.json"));
+    return existsSync4(join3(this.#txDir(tx), "manifest.json"));
   }
   hasConflict(tx) {
     return this.#conflictStatus(tx) === "conflicted";
   }
   #conflictStatus(tx) {
-    const reportPath = join6(this.root, "conflicts", tx, "report.json");
-    if (!existsSync6(reportPath)) return "none";
+    const reportPath = join3(this.root, "conflicts", tx, "report.json");
+    if (!existsSync4(reportPath)) return "none";
     let report;
     try {
-      report = validateConflictReport(JSON.parse(readFileSync7(reportPath, "utf8")));
+      report = validateConflictReport(JSON.parse(readFileSync4(reportPath, "utf8")));
     } catch {
       return "bad-report";
     }
     if (report.txid !== tx) return "bad-report";
-    const ev = join6(this.root, "conflicts", tx, "evidence");
+    const ev = join3(this.root, "conflicts", tx, "evidence");
     if (Array.isArray(report.evidence)) {
       for (const e of report.evidence) {
         if (!e || typeof e.name !== "string" || typeof e.hash !== "string" || !Number.isInteger(e.length)) return "bad-report";
-        const f2 = join6(ev, e.name);
+        const f2 = join3(ev, e.name);
         try {
-          if (!existsSync6(f2)) return "bad-evidence";
-          const bytes = readFileSync7(f2);
+          if (!existsSync4(f2)) return "bad-evidence";
+          const bytes = readFileSync4(f2);
           if (sha256(bytes) !== e.hash || bytes.length !== e.length) return "bad-evidence";
         } catch {
           return "bad-evidence";
@@ -1530,38 +1073,38 @@ var Journal = class {
     }
     for (const c of report.conflicts) {
       if (!c || typeof c.rel !== "string" || !c.state) return "bad-report";
-      const f2 = join6(ev, targetKey(c.rel) + ".bin");
-      const a = join6(ev, targetKey(c.rel) + ".absent.json");
+      const f2 = join3(ev, targetKey(c.rel) + ".bin");
+      const a = join3(ev, targetKey(c.rel) + ".absent.json");
       if (c.state.exists) {
-        if (!existsSync6(f2)) return "bad-evidence";
+        if (!existsSync4(f2)) return "bad-evidence";
         try {
-          if (sha256(readFileSync7(f2)) !== c.state.hash) return "bad-evidence";
+          if (sha256(readFileSync4(f2)) !== c.state.hash) return "bad-evidence";
         } catch {
           return "bad-evidence";
         }
-      } else if (!existsSync6(a)) return "bad-evidence";
+      } else if (!existsSync4(a)) return "bad-evidence";
     }
     return "conflicted";
   }
   scan() {
     const out = { txs: [] };
-    if (!existsSync6(this.txDir)) return out;
+    if (!existsSync4(this.txDir)) return out;
     for (const tx of readdirSync3(this.txDir)) {
-      const d = join6(this.txDir, tx);
+      const d = join3(this.txDir, tx);
       if (!statSync4(d).isDirectory()) continue;
       let m2 = null, manifestInvalid = false;
       try {
-        const raw = readJsonIfExists(join6(d, "manifest.json"));
+        const raw = readJsonIfExists(join3(d, "manifest.json"));
         if (raw) m2 = validateManifest(raw);
       } catch {
         manifestInvalid = true;
       }
-      const committed = existsSync6(join6(d, "COMMITTED"));
+      const committed = existsSync4(join3(d, "COMMITTED"));
       let outcome = null, outcomeInvalid = false;
-      const op = join6(d, "OUTCOME.json");
-      if (existsSync6(op)) {
+      const op = join3(d, "OUTCOME.json");
+      if (existsSync4(op)) {
         try {
-          outcome = validateOutcome(JSON.parse(readFileSync7(op, "utf8")));
+          outcome = validateOutcome(JSON.parse(readFileSync4(op, "utf8")));
         } catch {
           outcomeInvalid = true;
         }
@@ -1574,9 +1117,9 @@ var Journal = class {
     const m2 = this.#loadManifest(tx);
     for (const [rel, b2] of Object.entries(m2.targets)) {
       if (!b2.state.exists) continue;
-      const snap = join6(this.#txDir(tx), "snapshots", targetKey(rel) + ".bin");
-      if (!existsSync6(snap)) throw new JournalError("SNAPSHOT_MISSING", "snapshot missing: " + rel);
-      const bytes = readFileSync7(snap);
+      const snap = join3(this.#txDir(tx), "snapshots", targetKey(rel) + ".bin");
+      if (!existsSync4(snap)) throw new JournalError("SNAPSHOT_MISSING", "snapshot missing: " + rel);
+      const bytes = readFileSync4(snap);
       if (sha256(bytes) !== b2.state.hash) throw new JournalError("SNAPSHOT_BAD", "snapshot hash mismatch: " + rel);
       if (bytes.length !== b2.length) throw new JournalError("SNAPSHOT_BAD", "snapshot length mismatch: " + rel);
     }
@@ -1598,6 +1141,7 @@ var Journal = class {
     return this.#recoverEntries();
   }
   async #recoverEntries() {
+    this.lock?.fence();
     sweepLockDebris(this.root);
     sweepTrash(this.root);
     const scan = this.scan();
@@ -1673,7 +1217,7 @@ var Journal = class {
           report.push({ txid: p2.t.txid, result: "BAD_OUTCOME" });
           continue;
         }
-        if (!p2.t.outcome) atomicFile(join6(this.#txDir(p2.t.txid), "OUTCOME.json"), JSON.stringify({ v: 1, txid: p2.t.txid, outcome: "COMMITTED" }), { mode: 384 });
+        if (!p2.t.outcome) atomicFile(join3(this.#txDir(p2.t.txid), "OUTCOME.json"), JSON.stringify({ v: 1, txid: p2.t.txid, outcome: "COMMITTED" }), { mode: 384 });
         tombstone("journal", this.#txDir(p2.t.txid));
         report.push({ txid: p2.t.txid, result: "COMMITTED_OK" });
         continue;
@@ -1728,7 +1272,7 @@ var Journal = class {
           continue outer;
         }
       }
-      atomicFile(join6(this.#txDir(p2.t.txid), "OUTCOME.json"), JSON.stringify({ v: 1, txid: p2.t.txid, outcome: "ROLLED_BACK" }), { mode: 384 });
+      atomicFile(join3(this.#txDir(p2.t.txid), "OUTCOME.json"), JSON.stringify({ v: 1, txid: p2.t.txid, outcome: "ROLLED_BACK" }), { mode: 384 });
       report.push({ txid: p2.t.txid, result: "ROLLED_BACK" });
     }
     return report;
@@ -1746,7 +1290,7 @@ var Journal = class {
     const cur = fileState(p2);
     if (cur.hash !== owned.hash || cur.exists !== owned.exists) throw new JournalError("CONFLICT", "rollback optimistic check failed: " + rel);
     if (baseline.state.exists) {
-      const bytes = readFileSync7(join6(this.#txDir(tx), "snapshots", targetKey(rel) + ".bin"));
+      const bytes = readFileSync4(join3(this.#txDir(tx), "snapshots", targetKey(rel) + ".bin"));
       const op = this.#beginOp(tx, rel, { kind: "ROLLBACK", expected: owned, next: baseline.state, mode: baseline.mode, length: bytes.length });
       this.lock?.fence();
       replaceTarget(p2, bytes, parseInt(baseline.mode || "0644", 8));
@@ -1763,41 +1307,712 @@ var Journal = class {
     }
   }
   async archiveConflict(tx, conflicts) {
-    const d = join6(this.root, "conflicts", tx);
-    if (existsSync6(join6(d, "report.json"))) throw new JournalError("JOURNALLED", "conflict report already exists for tx: " + tx);
-    mkdirSync4(join6(d, "evidence"), { recursive: true, mode: 448 });
+    this.lock?.fence();
+    const d = join3(this.root, "conflicts", tx);
+    if (existsSync4(join3(d, "report.json"))) throw new JournalError("JOURNALLED", "conflict report already exists for tx: " + tx);
+    mkdirSync3(join3(d, "evidence"), { recursive: true, mode: 448 });
     const txd = this.#txDir(tx);
     const entries = [];
     const addEntry = (relPath, bytes) => {
-      const target = join6(d, "evidence", relPath);
-      mkdirSync4(dirname3(target), { recursive: true, mode: 448 });
+      const target = join3(d, "evidence", relPath);
+      mkdirSync3(dirname2(target), { recursive: true, mode: 448 });
       atomicFile(target, bytes, { mode: 384 });
       entries.push({ name: relPath, hash: sha256(bytes), length: bytes.length });
     };
-    if (existsSync6(join6(txd, "manifest.json"))) addEntry("manifest.json", readFileSync7(join6(txd, "manifest.json")));
-    const opsDir = join6(txd, "ops");
-    if (existsSync6(opsDir)) {
-      for (const f2 of readdirSync3(opsDir)) addEntry("ops/" + f2, readFileSync7(join6(opsDir, f2)));
+    if (existsSync4(join3(txd, "manifest.json"))) addEntry("manifest.json", readFileSync4(join3(txd, "manifest.json")));
+    const opsDir = join3(txd, "ops");
+    if (existsSync4(opsDir)) {
+      for (const f2 of readdirSync3(opsDir)) addEntry("ops/" + f2, readFileSync4(join3(opsDir, f2)));
     }
-    const snapDir = join6(txd, "snapshots");
-    if (existsSync6(snapDir)) {
-      for (const f2 of readdirSync3(snapDir)) addEntry("snapshots/" + f2, readFileSync7(join6(snapDir, f2)));
+    const snapDir = join3(txd, "snapshots");
+    if (existsSync4(snapDir)) {
+      for (const f2 of readdirSync3(snapDir)) addEntry("snapshots/" + f2, readFileSync4(join3(snapDir, f2)));
     }
     for (const c of conflicts) {
       const rel = c.rel;
       const p2 = this.#profilePath(rel);
       const st2 = fileState(p2);
       if (st2.exists) {
-        const bytes = readFileSync7(p2);
+        const bytes = readFileSync4(p2);
         addEntry(targetKey(rel) + ".bin", bytes);
         if (sha256(bytes) !== st2.hash) throw new JournalError("EVIDENCE_BAD", "evidence copy hash mismatch");
       } else addEntry(targetKey(rel) + ".absent.json", Buffer.from(JSON.stringify({ exists: false })));
     }
-    atomicFile(join6(d, "evidence-manifest.json"), JSON.stringify({ v: 1, txid: tx, entries }, null, 2), { mode: 384 });
-    atomicFile(join6(d, "report.json"), JSON.stringify({ v: 1, txid: tx, detectedAt: Date.now(), conflicts, evidence: entries }, null, 2), { mode: 384 });
+    atomicFile(join3(d, "evidence-manifest.json"), JSON.stringify({ v: 1, txid: tx, entries }, null, 2), { mode: 384 });
+    atomicFile(join3(d, "report.json"), JSON.stringify({ v: 1, txid: tx, detectedAt: Date.now(), conflicts, evidence: entries }, null, 2), { mode: 384 });
     const m2 = this.#loadManifest(tx);
     m2.state = "CONFLICTED";
-    atomicFile(join6(txd, "manifest.json"), JSON.stringify(m2, null, 2), { mode: 384 });
+    atomicFile(join3(txd, "manifest.json"), JSON.stringify(m2, null, 2), { mode: 384 });
+  }
+};
+
+// packages/install-core/src/errors.mjs
+var InstallError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+};
+
+// packages/install-core/src/install-service.mjs
+var TRACKED_FILES = ["package.json", "pnpm-lock.yaml", "cordis.patch.yml", ".cordis-mp/state.json"];
+var InstallService = class {
+  constructor({ catalog, journal, packageManager, activation = null, inspect = null, pendingPath = null, lock = null }) {
+    this.catalog = catalog;
+    this.journal = journal;
+    this.packageManager = packageManager;
+    this.activation = activation;
+    this.inspect = inspect;
+    this.pendingPath = pendingPath;
+    this.lock = lock;
+    if (!this.lock) throw new TypeError("InstallService requires a profile FileLock");
+    if (this.journal?.lock !== this.lock) throw new TypeError("InstallService and Journal must share the profile FileLock");
+    this.pending = /* @__PURE__ */ new Map();
+  }
+  async #withProfileLock(operation) {
+    try {
+      return await withFileLock(this.lock, "mutation", operation);
+    } catch (e) {
+      if (e?.code === "LOCK_BUSY") throw new InstallError("MUTATION_BUSY", "another profile mutation or recovery is in progress");
+      if (e?.code === "LOCK_FENCED") throw new InstallError("MUTATION_FENCED", "profile mutation lease was lost; no further writes were attempted");
+      throw e;
+    }
+  }
+  async install({ slug, platform = "web", confirmation = {}, signal } = {}) {
+    const fresh = await this.catalog.fetchFresh(slug);
+    if (confirmation.entryRevision && fresh.entryRevision !== confirmation.entryRevision) {
+      throw new InstallError("STALE_CONFIRMATION", "catalog entry changed; please review again");
+    }
+    const decision = this.catalog.installability(fresh, platform);
+    if (!decision.installable) throw new InstallError("NOT_INSTALLABLE", decision.reason);
+    const artifact = {
+      packageName: fresh.source.packageName,
+      version: fresh.source.version,
+      integrity: fresh.source.integrity,
+      tarball: fresh.source.tarball,
+      registry: fresh.source.registry
+    };
+    let stagedPath = null;
+    if (this.inspect) {
+      const inspected = await this.inspect.inspectArtifact(artifact);
+      const inspectedIds = inspected?.entryIds;
+      artifact.entryIds = Array.isArray(inspectedIds) && inspectedIds.length > 0 ? inspectedIds : Array.isArray(fresh.entryIds) ? fresh.entryIds : [];
+      stagedPath = inspected?.stagedPath || null;
+    } else {
+      artifact.entryIds = fresh.entryIds || [];
+    }
+    try {
+      return await this.#withProfileLock(async () => {
+        const tx = await this.journal.begin(TRACKED_FILES);
+        let disable = null;
+        let disableApplied = false;
+        try {
+          if (this.activation) {
+            disable = await this.activation.prepareDisable({ slug, artifact });
+            disable.ownedDisables = [];
+            if (disable?.entryIds?.length) {
+              await this.activation.preDisable(disable.entryIds);
+              disableApplied = true;
+              disable.ownedDisables = this.activation.ownedDisables || [];
+            }
+          }
+          const result = await this.packageManager.installVerifiedArtifact(artifact, signal);
+          if (result.exitCode !== 0) throw new InstallError("INSTALL_FAILED", result.stderr || `exit ${result.exitCode}`);
+          for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
+            await this.journal.adoptExternal(tx, rel, bytes);
+          }
+          const verified = await this.packageManager.verifyInstalled(artifact);
+          if (!verified) throw new InstallError("VERIFY_FAILED", "installed package does not match verified artifact");
+          await this.journal.commitFiles(tx);
+        } catch (e) {
+          if (e.code === "FP_INJECTED") throw e;
+          if (disableApplied && disable?.entryIds?.length) {
+            try {
+              await this.activation.cancelDisable(disable.entryIds);
+            } catch {
+            }
+          }
+          try {
+            await this.journal.recover();
+          } catch {
+          }
+          throw e;
+        }
+        const pending = { v: 1, slug, artifact, entryIds: disable?.entryIds || [], ownedDisables: disable?.ownedDisables || [], entryRevision: fresh.entryRevision, tx, createdAt: Date.now() };
+        this.pending.set(slug, pending);
+        await this.#persistPending();
+        return { status: "COMMITTED", pendingActivation: true, pending };
+      });
+    } finally {
+      if (stagedPath) {
+        try {
+          this.inspect.cleanup?.(stagedPath);
+        } catch {
+        }
+      }
+    }
+  }
+  async activate({ slug, signal } = {}) {
+    return this.#withProfileLock(async () => {
+      const pending = this.pending.get(slug);
+      if (!pending) throw new InstallError("NO_PENDING_ACTIVATION", "no pending activation for slug: " + slug);
+      if (!this.activation) throw new InstallError("NO_ACTIVATION_PORT", "activation port is not configured");
+      let activationStatus = null;
+      if (pending.entryIds.length) activationStatus = await this.activation.activate(pending.entryIds, { ownedSet: pending.ownedDisables });
+      this.pending.delete(slug);
+      await this.#persistPending();
+      return { status: "ACTIVE", activationStatus };
+    });
+  }
+  #pendingFile() {
+    if (!this.pendingPath) return null;
+    return join4(this.pendingPath, "pending-activation.json");
+  }
+  async #persistPending() {
+    const p2 = this.#pendingFile();
+    if (!p2) return;
+    const snapshot = { v: 1, items: [...this.pending.values()] };
+    const tx = await this.journal.begin([".cordis-mp/pending-activation.json"]);
+    try {
+      await this.journal.writePresent(tx, ".cordis-mp/pending-activation.json", Buffer.from(JSON.stringify(snapshot)));
+      await this.journal.commitFiles(tx);
+    } catch (e) {
+      try {
+        await this.journal.recover();
+      } catch {
+      }
+      ;
+      throw e;
+    }
+  }
+  async recoverPending() {
+    const p2 = this.#pendingFile();
+    if (!p2 || !existsSync5(p2)) return 0;
+    try {
+      const data = JSON.parse(readFileSync5(p2, "utf8"));
+      const list = data?.v === 1 ? Array.isArray(data.items) ? data.items : data.slug ? [data] : [] : [];
+      for (const item of list) if (item?.slug) this.pending.set(item.slug, item);
+      return list.length;
+    } catch {
+      return 0;
+    }
+  }
+  async uninstall({ packageName, signal } = {}) {
+    return this.#withProfileLock(async () => {
+      const tx = await this.journal.begin(TRACKED_FILES);
+      try {
+        const result = await this.packageManager.remove(packageName, signal);
+        if (result.exitCode !== 0) throw new InstallError("REMOVE_FAILED", result.stderr || `exit ${result.exitCode}`);
+        for (const [rel, bytes] of Object.entries(result.profileFiles || {})) {
+          await this.journal.adoptExternal(tx, rel, bytes);
+        }
+        await this.journal.commitFiles(tx);
+      } catch (e) {
+        if (e.code === "FP_INJECTED") throw e;
+        try {
+          await this.journal.recover();
+        } catch {
+        }
+        throw e;
+      }
+      return { status: "COMMITTED", tx };
+    });
+  }
+};
+
+// packages/web-harness/src/mutation-routes.mjs
+function json2(res, status, body) {
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+  res.end(JSON.stringify(body));
+}
+function readJsonBody(req, limit = 64 * 1024) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on("data", (c) => {
+      size += c.length;
+      if (size > limit) {
+        reject(Object.assign(new Error("body too large"), { code: "BODY_TOO_LARGE" }));
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      if (!chunks.length) return resolve({});
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      } catch (e) {
+        reject(Object.assign(new Error("invalid JSON body"), { code: "BAD_JSON" }));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+function createMutationHandler({ installService, platform = "web", guard = null }) {
+  return async (req, res) => {
+    const url = new URL(req.url || "/", "http://127.0.0.1");
+    if (url.pathname === "/cordis-mp/status" && req.method === "GET") return json2(res, 200, { ok: true, busy: false });
+    if (req.method !== "POST") {
+      res.writeHead(405, { allow: "POST" });
+      res.end();
+      return;
+    }
+    if (guard) {
+      const check = guard.guard(req);
+      if (!check.ok) return json2(res, check.status, { error: { code: check.reason, message: "untrusted mutation request" } });
+    }
+    try {
+      if (url.pathname === "/cordis-mp/install") {
+        const body = await readJsonBody(req);
+        const out = await installService.install({ slug: body.slug, platform, confirmation: { entryRevision: body.entryRevision } });
+        return json2(res, 200, { ok: true, ...out });
+      }
+      if (url.pathname === "/cordis-mp/uninstall") {
+        const body = await readJsonBody(req);
+        const out = await installService.uninstall({ packageName: body.name });
+        return json2(res, 200, { ok: true, ...out });
+      }
+      if (url.pathname === "/cordis-mp/activate") {
+        const body = await readJsonBody(req);
+        const out = await installService.activate({ slug: body.slug });
+        return json2(res, 200, { ok: true, ...out });
+      }
+      json2(res, 404, { error: { code: "NOT_FOUND", message: "no such route" } });
+    } catch (e) {
+      if (e instanceof InstallError) {
+        const status = ["MUTATION_BUSY", "MUTATION_FENCED"].includes(e.code) ? 409 : 400;
+        return json2(res, status, { error: { code: e.code, message: e.message } });
+      }
+      if (e.code === "BAD_JSON" || e.code === "BODY_TOO_LARGE") return json2(res, 400, { error: { code: e.code, message: e.message } });
+      json2(res, 500, { error: { code: "INTERNAL", message: e?.message || String(e) } });
+    }
+  };
+}
+function mountMutationRoutes(webServer, opts) {
+  const handler = createMutationHandler(opts);
+  const disposers = [
+    webServer.register({ kind: "exact", path: "/cordis-mp/install", handler }),
+    webServer.register({ kind: "exact", path: "/cordis-mp/uninstall", handler }),
+    webServer.register({ kind: "exact", path: "/cordis-mp/activate", handler }),
+    webServer.register({ kind: "exact", path: "/cordis-mp/status", handler })
+  ];
+  return () => {
+    for (const d of disposers) d();
+  };
+}
+
+// packages/web-harness/src/security.mjs
+import { randomBytes as randomBytes4 } from "node:crypto";
+function normHost(hostHeader) {
+  try {
+    const u2 = new URL("http://" + (hostHeader || ""));
+    return { host: u2.hostname.toLowerCase(), port: u2.port || "80" };
+  } catch {
+    return { host: (hostHeader || "").toLowerCase(), port: "" };
+  }
+}
+function isLoopback(address) {
+  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+}
+function sameOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin || origin === "null") return { ok: false, reason: "origin-missing-or-null" };
+  let o;
+  try {
+    o = new URL(origin);
+  } catch {
+    return { ok: false, reason: "origin-invalid" };
+  }
+  const expected = normHost(req.headers.host);
+  const actual = normHost(o.host);
+  if (actual.host !== expected.host || actual.port !== expected.port) return { ok: false, reason: "origin-host-mismatch" };
+  return { ok: true };
+}
+var MutationGuard = class {
+  constructor({ allowedHosts = ["127.0.0.1", "localhost", "[::1]"], loopbackOnly = true } = {}) {
+    this.allowedHosts = new Set(allowedHosts);
+    this.loopbackOnly = loopbackOnly;
+    this.ttlMs = 15 * 60 * 1e3;
+    this.#rotateToken();
+  }
+  #rotateToken() {
+    this.token = randomBytes4(32).toString("hex");
+    this.tokenIssuedAt = Date.now();
+  }
+  #tokenExpired() {
+    return Date.now() - this.tokenIssuedAt > this.ttlMs;
+  }
+  #baseCheck(req) {
+    const reasons = [];
+    if (this.loopbackOnly && !isLoopback(req.socket?.remoteAddress)) reasons.push("peer-not-loopback");
+    const h = normHost(req.headers.host);
+    if (!this.allowedHosts.has(h.host)) reasons.push("host-not-allowed");
+    const so2 = sameOrigin(req);
+    if (!so2.ok) reasons.push(so2.reason);
+    const sf = req.headers["sec-fetch-site"];
+    if (sf && !["same-origin", "none"].includes(sf)) reasons.push("sec-fetch-site=" + sf);
+    return { ok: reasons.length === 0, reasons };
+  }
+  session(req) {
+    const base = this.#baseCheck(req);
+    if (!base.ok) return base;
+    if (this.#tokenExpired()) this.#rotateToken();
+    return { ...base, ok: true };
+  }
+  guard(req) {
+    const base = this.#baseCheck(req);
+    if (!base.ok) return { ok: false, reason: base.reasons[0], reasons: base.reasons, status: 403 };
+    if (this.#tokenExpired()) return { ok: false, reason: "token-expired", reasons: [...base.reasons, "token-expired"], status: 403 };
+    const token = req.headers["x-cordis-mp-token"];
+    if (token !== this.token) return { ok: false, reason: "bad-token", reasons: [...base.reasons, "bad-token"], status: 403 };
+    return { ok: true, reasons: base.reasons, status: 0 };
+  }
+};
+
+// packages/web-harness/src/session-routes.mjs
+function json3(res, status, body) {
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+  res.end(JSON.stringify(body));
+}
+function createSessionHandler(guard = new MutationGuard()) {
+  return (req, res) => {
+    if (req.method !== "POST") {
+      res.writeHead(405, { allow: "POST" });
+      res.end();
+      return;
+    }
+    const check = guard.session(req);
+    if (!check.ok) return json3(res, 403, { error: { code: check.reason, message: "untrusted session request" } });
+    json3(res, 200, { token: guard.token, ttl: Math.floor(guard.ttlMs / 1e3), expiresAt: new Date(guard.tokenIssuedAt + guard.ttlMs).toISOString() });
+  };
+}
+function mountSessionRoute(webServer, guard = new MutationGuard()) {
+  return webServer.register({ kind: "exact", path: "/cordis-mp/session", handler: createSessionHandler(guard) });
+}
+
+// packages/dsh-runner/src/runner.mjs
+import { spawn } from "node:child_process";
+var DshRunner = class {
+  constructor({ dshBin = "dsh", dshHome = process.env.DSH_HOME, profile = "web", timeoutMs = 15 * 60 * 1e3 } = {}) {
+    this.dshBin = dshBin;
+    this.dshHome = dshHome;
+    this.profile = profile;
+    this.timeoutMs = timeoutMs;
+    this.active = null;
+  }
+  pluginArgs(profile) {
+    return ["plugin", "--profile", profile ?? this.profile];
+  }
+  #env() {
+    const env = { ...process.env, CI: "true" };
+    if (this.dshHome) env.DSH_HOME = this.dshHome;
+    return env;
+  }
+  run(args, { signal } = {}) {
+    if (this.active) return Promise.resolve({ exitCode: 409, timedOut: false, stdout: "", stderr: "another dsh operation is already running", cancelled: false, busy: true });
+    const child = spawn(this.dshBin, args, { env: this.#env(), stdio: ["ignore", "pipe", "pipe"], shell: false, detached: process.platform !== "win32" });
+    this.active = child;
+    let stdout = "", stderr = "", timedOut = false, cancelled = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      this.cancel();
+    }, this.timeoutMs);
+    child.stdout?.on("data", (d) => stdout = (stdout + d.toString()).slice(-256 * 1024));
+    child.stderr?.on("data", (d) => stderr = (stderr + d.toString()).slice(-64 * 1024));
+    const onAbort = () => {
+      cancelled = true;
+      this.cancel();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    return new Promise((resolve) => {
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        this.active = null;
+        resolve({ exitCode: 127, timedOut, stdout, stderr: `${stderr}
+${err.message}`, cancelled });
+      });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        this.active = null;
+        resolve({ exitCode: code, timedOut, stdout, stderr, cancelled });
+      });
+    });
+  }
+  cancel() {
+    const child = this.active;
+    if (!child) return false;
+    if (process.platform === "win32") {
+      try {
+        spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
+      } catch {
+        child.kill();
+      }
+    } else {
+      try {
+        process.kill(-child.pid, "SIGTERM");
+      } catch {
+        child.kill();
+      }
+    }
+    return true;
+  }
+  async probe() {
+    const r = await this.run(["--version"], { signal: AbortSignal.timeout(1e4) });
+    return r.exitCode === 0 && !r.timedOut;
+  }
+};
+
+// packages/dsh-runner/src/package-manager.mjs
+import { existsSync as existsSync6, lstatSync, readFileSync as readFileSync6 } from "node:fs";
+import { join as join5 } from "node:path";
+var TRACKED = ["package.json", "pnpm-lock.yaml", "cordis.patch.yml", ".cordis-mp/state.json"];
+var MAX_LOCKFILE_BYTES = 16 * 1024 * 1024;
+function unquoteYamlScalar(value) {
+  const text = String(value || "").trim();
+  if (text.length >= 2 && text.startsWith("'") && text.endsWith("'")) return text.slice(1, -1).replace(/''/g, "'");
+  if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text.slice(1, -1);
+    }
+  }
+  return text;
+}
+function isArtifactPackageKey(key, artifact) {
+  const id = `${artifact.packageName}@${artifact.version}`;
+  return key === id || key === `/${id}` || key.startsWith(`${id}(`) || key.startsWith(`/${id}(`);
+}
+function inlineIntegrity(resolution) {
+  const match = /(?:^|,)\s*integrity:\s*([^,}]+)/.exec(resolution);
+  return match ? unquoteYamlScalar(match[1]) : null;
+}
+function pnpmLockRecords(lockfile, artifact) {
+  let inPackages = false;
+  let current = null;
+  const records = [];
+  const finish = () => {
+    if (current) records.push(current);
+    current = null;
+  };
+  for (const line of lockfile.split(/\r?\n/)) {
+    if (!inPackages) {
+      if (/^packages:\s*(?:#.*)?$/.test(line)) inPackages = true;
+      continue;
+    }
+    if (/^[^\s#]/.test(line)) break;
+    const entry = /^ {2}([^\s].*?):\s*(?:#.*)?$/.exec(line);
+    if (entry) {
+      finish();
+      const key = unquoteYamlScalar(entry[1]);
+      if (isArtifactPackageKey(key, artifact)) current = { integrity: null, resolutionIndent: null };
+      continue;
+    }
+    if (!current) continue;
+    const flowResolution = /^ {4}resolution:\s*\{(.*)\}\s*(?:#.*)?$/.exec(line);
+    if (flowResolution) {
+      current.integrity = inlineIntegrity(flowResolution[1]);
+      current.resolutionIndent = null;
+      continue;
+    }
+    if (/^ {4}resolution:\s*(?:#.*)?$/.test(line)) {
+      current.resolutionIndent = 4;
+      continue;
+    }
+    if (current.resolutionIndent === 4) {
+      const nestedIntegrity = /^ {6}integrity:\s*(.*?)\s*(?:#.*)?$/.exec(line);
+      if (nestedIntegrity) current.integrity = unquoteYamlScalar(nestedIntegrity[1]);
+    }
+  }
+  finish();
+  return records;
+}
+function lockfileIntegrityMatches(lockPath, artifact) {
+  if (typeof artifact?.integrity !== "string" || artifact.integrity.length === 0) return false;
+  try {
+    const stat = lstatSync(lockPath);
+    if (!stat.isFile() || stat.size > MAX_LOCKFILE_BYTES) return false;
+    const records = pnpmLockRecords(readFileSync6(lockPath, "utf8"), artifact);
+    return records.length > 0 && records.every((record) => record.integrity === artifact.integrity);
+  } catch {
+    return false;
+  }
+}
+var DshPackageManagerPort = class {
+  constructor({ runner, profileDir, platform = "web" }) {
+    this.runner = runner;
+    this.profileDir = profileDir;
+    this.platform = platform;
+  }
+  #spec(artifact) {
+    return `${artifact.packageName}@${artifact.version}`;
+  }
+  #profileFiles() {
+    const files = {};
+    for (const rel of TRACKED) {
+      const p2 = join5(this.profileDir, rel);
+      if (existsSync6(p2)) files[rel] = readFileSync6(p2);
+    }
+    return files;
+  }
+  async installVerifiedArtifact(artifact, signal) {
+    const result = await this.runner.run([...this.runner.pluginArgs(), "add", this.#spec(artifact), "--ignore-scripts"], { signal });
+    return { ...result, profileFiles: result.exitCode === 0 ? this.#profileFiles() : {} };
+  }
+  async remove(packageName, signal) {
+    const result = await this.runner.run([...this.runner.pluginArgs(), "remove", packageName], { signal });
+    return { ...result, profileFiles: result.exitCode === 0 ? this.#profileFiles() : {} };
+  }
+  async verifyInstalled(artifact) {
+    const p2 = join5(this.profileDir, "node_modules", artifact.packageName, "package.json");
+    try {
+      const manifest = JSON.parse(readFileSync6(p2, "utf8"));
+      if (manifest.name !== artifact.packageName || manifest.version !== artifact.version) return false;
+      return lockfileIntegrityMatches(join5(this.profileDir, "pnpm-lock.yaml"), artifact);
+    } catch {
+      return false;
+    }
+  }
+};
+
+// packages/dsh-runner/src/activation.mjs
+import { readFileSync as readFileSync7, writeFileSync as writeFileSync2, mkdirSync as mkdirSync4, renameSync as renameSync3, openSync as openSync2, fsyncSync as fsyncSync2, closeSync as closeSync2 } from "node:fs";
+import { dirname as dirname3, join as join6 } from "node:path";
+import { randomBytes as randomBytes5 } from "node:crypto";
+var ROW_ID_RE = /^[A-Za-z0-9_.-]+$/;
+var DshActivationPort = class {
+  constructor({ patchPath }) {
+    this.patchPath = patchPath;
+    this.owned = /* @__PURE__ */ new Set();
+  }
+  get ownedDisables() {
+    return [...this.owned];
+  }
+  #text() {
+    try {
+      return readFileSync7(this.patchPath, "utf8");
+    } catch {
+      return "[]\n";
+    }
+  }
+  #save(text) {
+    const dir = dirname3(this.patchPath);
+    mkdirSync4(dir, { recursive: true, mode: 448 });
+    const tmp = join6(dir, `.cordis.patch.${randomBytes5(6).toString("hex")}`);
+    const fd = openSync2(tmp, "wx", 384);
+    try {
+      writeFileSync2(fd, text);
+    } finally {
+      closeSync2(fd);
+    }
+    const r = openSync2(tmp, "r");
+    try {
+      fsyncSync2(r);
+    } finally {
+      closeSync2(r);
+    }
+    renameSync3(tmp, this.patchPath);
+    const d = openSync2(dir, "r");
+    try {
+      fsyncSync2(d);
+    } finally {
+      closeSync2(d);
+    }
+  }
+  readState() {
+    const lines = this.#text().split(/\r?\n/);
+    const disables = [];
+    const forced = [];
+    const inserts = [];
+    let inInsert = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] ?? "";
+      if (/^- insert:\s*$/.test(line)) {
+        inInsert = true;
+        continue;
+      }
+      if (/^- /.test(line)) inInsert = false;
+      if (inInsert) {
+        const m2 = /^ {4}- id: ([A-Za-z0-9_.-]+)/.exec(line);
+        if (m2) inserts.push(m2[1]);
+        continue;
+      }
+      const row = /^- id: ([A-Za-z0-9_.-]+)\s*$/.exec(line);
+      if (!row) continue;
+      const next = lines[i + 1] ?? "";
+      if (/^ {2}disabled: true\s*$/.test(next)) disables.push(row[1]);
+      else if (/^ {2}disabled: false\s*$/.test(next)) forced.push(row[1]);
+    }
+    return { disables, forced, inserts };
+  }
+  preDisable(entryIds) {
+    const ids = [...new Set(entryIds)].filter((id) => ROW_ID_RE.test(id));
+    if (ids.length === 0) return 0;
+    let text = this.#text().replace(/\n?$/, "\n");
+    const lines = text.split("\n");
+    const emptyIdx = lines.findIndex((l) => /^\s*\[\]\s*$/.test(l));
+    if (emptyIdx !== -1) lines.splice(emptyIdx, 1);
+    let changed = 0;
+    for (const id of ids) {
+      let found = false;
+      for (let i = 0; i < lines.length - 1; i++) {
+        const m2 = /^- id: ([A-Za-z0-9_.-]+)\s*$/.exec(lines[i]);
+        if (!m2 || m2[1] !== id) continue;
+        found = true;
+        if (/^ {2}disabled: true\s*$/.test(lines[i + 1] ?? "")) break;
+        if (/^ {2}disabled: false\s*$/.test(lines[i + 1] ?? "")) {
+          lines[i + 1] = "  disabled: true";
+          changed++;
+          this.owned.add(id);
+        }
+        break;
+      }
+      if (!found) {
+        lines.push(`- id: ${id}`, "  disabled: true");
+        changed++;
+        this.owned.add(id);
+      }
+    }
+    if (changed > 0) this.#save(lines.join("\n"));
+    return changed;
+  }
+  activate(entryIds, { ownedOnly = false, ownedSet = null } = {}) {
+    let ids = new Set(entryIds.filter((id) => ROW_ID_RE.test(id)));
+    if (ownedOnly) ids = new Set([...ids].filter((id) => this.owned.has(id)));
+    if (Array.isArray(ownedSet)) ids = new Set([...ids].filter((id) => ownedSet.includes(id)));
+    if (ids.size === 0) return 0;
+    const lines = this.#text().split("\n");
+    const out = [];
+    let removed = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const m2 = /^- id: ([A-Za-z0-9_.-]+)\s*$/.exec(lines[i]);
+      if (m2 && ids.has(m2[1]) && /^ {2}disabled: true\s*$/.test(lines[i + 1] ?? "")) {
+        i++;
+        removed++;
+        this.owned.delete(m2[1]);
+        continue;
+      }
+      out.push(lines[i]);
+    }
+    if (removed > 0) {
+      const hasRows = out.some((l) => /^\s*- /.test(l));
+      if (!hasRows) {
+        let idx = 0;
+        while (idx < out.length && (out[idx].trim() === "" || out[idx].trim().startsWith("#"))) idx++;
+        out.splice(idx, 0, "[]");
+      }
+      this.#save(out.join("\n"));
+    }
+    return removed;
+  }
+  async prepareDisable({ artifact }) {
+    return { entryIds: artifact?.entryIds || [] };
+  }
+  async cancelDisable(entryIds) {
+    return this.activate(entryIds, { ownedOnly: true });
   }
 };
 
@@ -4960,20 +5175,24 @@ function createRuntime({ dir = null, baseUrl = null, dshHome = null, profile = n
   const catalog = new CatalogClient({ baseUrl: base, snapshot: loadSnapshot() });
   const runner = new DshRunner({ dshHome: dshHome ?? process.env.DSH_HOME, profile: profile ?? process.env.CORDIS_MP_PROFILE ?? "web" });
   const packageManager = new DshPackageManagerPort({ runner, profileDir: resolvedDir });
-  const journal = new Journal({ journalRoot: join8(resolvedDir, ".cordis-mp"), profileRoot: resolvedDir });
+  const journalRoot = join8(resolvedDir, ".cordis-mp");
+  const profileLock = new FileLock(journalRoot);
+  const journal = new Journal({ journalRoot, profileRoot: resolvedDir, lock: profileLock });
   const activation = new DshActivationPort({ patchPath: join8(resolvedDir, "cordis.patch.yml") });
   const inspect = new HttpArtifactInspector({ cacheDir: join8(resolvedDir, ".cordis-mp", "artifacts") });
-  const installService = new InstallService({ catalog, journal, packageManager, activation, inspect, pendingPath: join8(resolvedDir, ".cordis-mp") });
-  return { dir: resolvedDir, base, catalog, journal, packageManager, activation, inspect, installService };
+  const installService = new InstallService({ catalog, journal, packageManager, activation, inspect, pendingPath: join8(resolvedDir, ".cordis-mp"), lock: profileLock });
+  return { dir: resolvedDir, base, catalog, journal, profileLock, packageManager, activation, inspect, installService };
 }
 function apply(ctx) {
   ctx.inject(["webServer"], (hostCtx) => {
     const webServer = hostCtx.webServer;
-    const { installService, catalog, journal } = createRuntime();
+    const { installService, catalog, journal, profileLock } = createRuntime();
     const guard = new MutationGuard();
     hostCtx.effect(async () => {
-      await journal.recover();
-      await installService.recoverPending();
+      await withFileLock(profileLock, "recovery", async () => {
+        await journal.recover();
+        await installService.recoverPending();
+      });
       const a = mountCatalogRoutes(webServer, catalog);
       const b2 = mountMutationRoutes(webServer, { installService, platform: "web", guard });
       const c = mountSessionRoute(webServer, guard);

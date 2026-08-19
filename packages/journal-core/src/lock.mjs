@@ -125,6 +125,20 @@ export class FileLock {
   }
 }
 
+/**
+ * Hold a profile lock for one complete mutation/recovery operation.
+ * Mutation entry points must provide a lock: silently running an install or
+ * recovery without one would bypass the journal's fencing contract.
+ */
+export async function withFileLock(lock, scope, operation) {
+  if (!lock || typeof lock.acquire !== 'function' || typeof lock.release !== 'function') {
+    throw new TypeError('a FileLock is required for a mutating operation')
+  }
+  lock.acquire(scope)
+  try { return await operation() }
+  finally { lock.release() }
+}
+
 export function sweepLockDebris(root, { olderThanMs = 60_000 } = {}){
   if (!existsSync(root)) return
   for(const name of readdirSync(root)){

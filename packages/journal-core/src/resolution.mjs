@@ -180,6 +180,7 @@ export class ResolutionJournal {
 
 
   async markConflicted(rid){
+    this.lock?.fence()
     const m=this.#manifest(rid)
     atomicFile(this.#outcomePath(rid), JSON.stringify(makeResolutionOutcome(rid,m.txid,'RESOLUTION_CONFLICTED')), {mode:0o600})
   }
@@ -187,6 +188,9 @@ export class ResolutionJournal {
   async recoverReport(){ return makeRecoveryReport(await this.#recoverEntries()) }
   async recover(){ return this.#recoverEntries() }
   async #recoverEntries(){
+    // This path can resolve targets, write outcomes, and clean tombstones.
+    // A configured lock must therefore be actively held before recovery starts.
+    this.lock?.fence()
     const report=[]
     let list
     try { list=this.list() } catch(e){ return [{result:e.code}] }

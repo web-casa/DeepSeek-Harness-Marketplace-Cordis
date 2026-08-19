@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
-import { Journal, JournalError, FileLock, LockBusy, sha256, fileState } from '../src/index.js'
+import { Journal, JournalError, FileLock, LockBusy, sha256, fileState, withFileLock } from '../src/index.js'
 import { setFailpoint, clearFailpoints } from '../src/failpoints.mjs'
 
 afterEach(()=>clearFailpoints())
@@ -118,6 +118,14 @@ test('fenced lock blocks journal writes', async ()=>{
   mkdirSync(join(journalRoot,'lock'),{recursive:true})
   writeFileSync(join(journalRoot,'lock','owner.json'), JSON.stringify({owner:'x',pid:process.pid,processStartToken:'x',ownerToken:'other',epoch:2,heartbeatAt:Date.now()}))
   await assert.rejects(()=>guarded.writePresent(tx,'package.json',Buffer.from('A1')), e=>e.code==='LOCK_FENCED')
+})
+
+test('configured journal recovery requires an acquired lock', async ()=>{
+  const {j,journalRoot}=make()
+  const lock=new FileLock(journalRoot)
+  const guarded=new Journal({journalRoot, profileRoot:j.profile, lock})
+  await assert.rejects(()=>guarded.recover(), e=>e.code==='LOCK_BUSY')
+  assert.deepEqual(await withFileLock(lock, 'recovery', ()=>guarded.recover()), [])
 })
 
 test('INTENDED and CONFIRMED share opId and seq', async ()=>{

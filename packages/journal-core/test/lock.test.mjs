@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { FileLock, LockBusy } from '../src/lock.mjs'
+import { FileLock, LockBusy, withFileLock } from '../src/lock.mjs'
 
 function root(){ return mkdtempSync(join(tmpdir(),'lock-')) }
 const helper = fileURLToPath(new URL('./lock-helper.mjs', import.meta.url))
@@ -34,6 +34,15 @@ test('heartbeat and fence token checks', ()=>{
   writeFileSync(join(r,'lock','owner.json'), JSON.stringify({owner:'y',pid:process.pid,processStartToken:'x',ownerToken:'other',epoch:2,heartbeatAt:Date.now()}))
   assert.throws(()=>a.heartbeat(), e=>e.code==='LOCK_FENCED')
   assert.throws(()=>a.fence(), e=>e.code==='LOCK_FENCED')
+})
+test('withFileLock fences the operation and releases on failure', async ()=>{
+  const r=root(); const a=new FileLock(r)
+  await assert.rejects(() => withFileLock(a, 'mutation', async ()=>{
+    a.fence()
+    assert.throws(()=>new FileLock(r).acquire('mutation'), e=>e.code==='LOCK_BUSY')
+    throw new Error('expected failure')
+  }), /expected failure/)
+  const b=new FileLock(r); b.acquire('mutation'); b.release()
 })
 test('dual takeover race yields exactly one winner', async ()=>{
   const r=root()

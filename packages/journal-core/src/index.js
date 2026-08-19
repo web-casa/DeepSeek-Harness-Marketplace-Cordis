@@ -1,5 +1,5 @@
 export { Journal, JournalError } from './journal.mjs'
 export { ResolutionJournal, ResolutionError } from './resolution.mjs'
-export { FileLock, LockBusy, LockFenced } from './lock.mjs'
+export { FileLock, LockBusy, LockFenced, withFileLock } from './lock.mjs'
 export * from './state.mjs'
 export * from './durable.mjs'

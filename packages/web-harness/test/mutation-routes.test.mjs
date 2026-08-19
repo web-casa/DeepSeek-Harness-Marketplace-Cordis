@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
+import { InstallError } from '@cordis-mp/install-core'
 import { createMutationHandler, mountMutationRoutes } from '../src/mutation-routes.mjs'
 
 function listen(h) { return new Promise(resolve => { const s = createServer(h); s.listen(0, '127.0.0.1', () => resolve(s)) }) }
@@ -43,6 +44,16 @@ test('invalid JSON body maps to 400', async () => {
   const body = await res.json()
   assert.equal(res.status, 400)
   assert.equal(body.error.code, 'BAD_JSON')
+  server.close()
+})
+
+test('profile lock contention maps to a recoverable 409 diagnostic', async () => {
+  const svc = { async install() { throw new InstallError('MUTATION_BUSY', 'another profile mutation or recovery is in progress') } }
+  const server = await listen(createMutationHandler({ installService: svc }))
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/cordis-mp/install`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: 'p' }) })
+  const body = await res.json()
+  assert.equal(res.status, 409)
+  assert.equal(body.error.code, 'MUTATION_BUSY')
   server.close()
 })
 
