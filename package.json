@@ -12,7 +12,8 @@
     "test": "pnpm -r test",
     "smoke": "node scripts/host-smoke.mjs",
     "api:probe": "node scripts/cordis-run-contract-probe.mjs",
-    "pack:check": "node scripts/npm-pack-check.mjs"
+    "pack:check": "node scripts/npm-pack-check.mjs",
+    "release:public-check": "node scripts/public-release-check.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"

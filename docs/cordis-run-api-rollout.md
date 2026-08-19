@@ -2,23 +2,32 @@
 
 ## Current verified status
 
-On 2026-08-19, the production list and detail endpoints returned Next.js
-`404 text/html`, not the v4 JSON contract. The earlier inventory was incomplete:
-the cordis.run backend is the parent repository
-`/home/ivmm/daohang/toolso-ai-open`, not the nested `cordis-mp` workspace.
+The cordis.run backend is the parent repository
+`/home/ivmm/daohang/toolso-ai-open`, not the nested `cordis-mp` workspace. It
+is deployed. A read-only production check on 2026-08-19 confirmed:
 
-The parent now contains the strict v4 routes, registry-artifact persistence and
-sync, direct verified preset download, route/unit tests, a successful production
-build, and a local real-Next/temporary-PostgreSQL contract probe. No production
-deployment was performed in this checkout, so this is **not** a production API
-or production-API E2E pass.
+- `GET /api/v1/plugins?platform=desktop&limit=1` returns v1 JSON with ETag;
+- a missing detail returns JSON `404 NOT_FOUND` rather than Next.js HTML; and
+- `GET /api/presets/code/download` returns direct `200 application/zip` without
+  a `Location` header.
 
-## Remaining rollout operator work
+The strict install catalog currently has `count=0`. This is a correct
+fail-closed result until a public npm artifact supplies the exact latest
+version, SHA-512 integrity, registry tarball, DSH engine, and platform evidence.
+The checks above prove production API structure and preset delivery only; they
+are **not** a production plugin-install or lifecycle E2E pass.
 
-Deploy the routes in
-[`cordis-run-api-contract.md`](./cordis-run-api-contract.md) without a Next.js
-HTML fallback. The detailed parent-repository procedure is
-[`../docs/CORDIS-API-V4.md`](../../docs/CORDIS-API-V4.md):
+## Remaining release and acceptance work
+
+The parent runbook in
+[`../docs/CORDIS-API-V4.md`](../../docs/CORDIS-API-V4.md) remains the procedure
+for a fresh environment or a future v4 deployment change. Do not rerun schema
+migration or synchronization blindly against the already deployed production
+service. The remaining release sequence is publish an owner-approved standalone
+artifact, run its registry-only preflight, perform the guarded registry
+synchronization, and then meet the strict acceptance gates below.
+
+The deployed routes provide:
 
 - `GET /api/v1/plugins` supports q/category/platform/sort/order/cursor/limit,
   plus temporary `page/per_page` compatibility; returns JSON `count + page`.
@@ -29,10 +38,10 @@ HTML fallback. The detailed parent-repository procedure is
   tarball host equal to the approved registry host.
 - preset download is direct `200 application/zip` from `cordis.run`, not a 302.
 
-The operator must apply the nullable `plugin_meta.registry_artifact` column before
-deploying the route, backfill it through the existing controlled npm syncer, then
-run the probe below. Incomplete registry/GitHub-only records are intentionally
-omitted rather than guessed into installable API rows.
+Incomplete registry/GitHub-only records are intentionally omitted rather than
+guessed into installable API rows. A mutable synchronization remains an
+owner-authorized production operation; it must use the existing guarded syncer
+and an approved Cordis category.
 
 ## Non-mutating deployment gate
 
@@ -54,8 +63,8 @@ deterministic. It now accepts an external catalog explicitly:
 
 ```bash
 CORDIS_RUN_API=https://<target>/api/v1 \
-CORDIS_E2E_SLUG=dsh-market \
-CORDIS_E2E_PLUGIN_ROUTE=/dsh-market/registry \
+CORDIS_E2E_SLUG=<approved-e2e-slug> \
+CORDIS_E2E_PLUGIN_ROUTE=/<known-plugin-route> \
   node scripts/dsh-e2e-install.mjs
 ```
 

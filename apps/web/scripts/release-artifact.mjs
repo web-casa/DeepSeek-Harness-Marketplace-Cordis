@@ -2,11 +2,13 @@
 // registry release. The workspace package remains private; this script creates
 // a self-contained candidate only and never publishes it.
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 export const RELEASE_DSH_ENGINE = '>=0.1.0-rc.7 <0.2.0'
+export const PUBLIC_RELEASE_LICENSE_FILE = 'LICENSE'
+export const MAX_PUBLIC_RELEASE_LICENSE_BYTES = 128 * 1024
 export const RELEASE_ARTIFACT_FILES = Object.freeze([
   'package.json',
   'README.md',
@@ -14,6 +16,10 @@ export const RELEASE_ARTIFACT_FILES = Object.freeze([
   'dist/index.js',
   'dist/client.js',
   'data/registry-snapshot.json',
+])
+export const PUBLIC_RELEASE_ARTIFACT_FILES = Object.freeze([
+  ...RELEASE_ARTIFACT_FILES,
+  PUBLIC_RELEASE_LICENSE_FILE,
 ])
 
 const EXACT_SEMVER_RE = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
@@ -24,6 +30,41 @@ function isRecord(value) {
 
 function exactPlatforms(value) {
   return Array.isArray(value) && value.length === 2 && new Set(value).size === 2 && value.includes('web') && value.includes('desktop')
+}
+
+function publicLicenseDeclarationProblem(source) {
+  if (typeof source.license !== 'string' || source.license.trim().length === 0) {
+    return 'public release requires a non-empty package.json license declaration'
+  }
+  if (source.license.trim().toUpperCase() === 'UNLICENSED') {
+    return 'public release must not declare license UNLICENSED'
+  }
+  return null
+}
+
+function publicLicenseFileProblem(appDir) {
+  const licensePath = join(appDir, PUBLIC_RELEASE_LICENSE_FILE)
+  let metadata
+  try {
+    metadata = lstatSync(licensePath)
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'ENOENT') {
+      return `public release requires a checked-in ${PUBLIC_RELEASE_LICENSE_FILE} file`
+    }
+    const message = error instanceof Error ? error.message : String(error)
+    return `cannot inspect public release ${PUBLIC_RELEASE_LICENSE_FILE} file: ${message}`
+  }
+  if (!metadata.isFile()) {
+    return `public release ${PUBLIC_RELEASE_LICENSE_FILE} must be a regular file, not a symlink or directory`
+  }
+  if (metadata.size === 0) return `public release ${PUBLIC_RELEASE_LICENSE_FILE} must not be empty`
+  if (metadata.size > MAX_PUBLIC_RELEASE_LICENSE_BYTES) {
+    return `public release ${PUBLIC_RELEASE_LICENSE_FILE} must not exceed ${MAX_PUBLIC_RELEASE_LICENSE_BYTES} bytes`
+  }
+  if (readFileSync(licensePath, 'utf8').trim().length === 0) {
+    return `public release ${PUBLIC_RELEASE_LICENSE_FILE} must contain non-whitespace text`
+  }
+  return null
 }
 
 /** Return a human-readable source-manifest problem, or null when it is safe to package. */
@@ -48,13 +89,23 @@ export function releaseManifestProblem(source) {
   return null
 }
 
+/** Return a human-readable public-release manifest problem, or null when legal metadata is explicit. */
+export function publicReleaseManifestProblem(source) {
+  return releaseManifestProblem(source) || publicLicenseDeclarationProblem(source)
+}
+
+/** Return a human-readable public-release artifact problem, or null when it is safe to create. */
+export function publicReleaseArtifactProblem(appDir, source) {
+  return publicReleaseManifestProblem(source) || publicLicenseFileProblem(appDir)
+}
+
 /**
  * Convert the private workspace manifest into the manifest that would be
  * published. Keep this transformation narrow so workspace dependencies and
  * source-only scripts cannot leak into an installable artifact.
  */
-export function createReleaseManifest(source) {
-  const problem = releaseManifestProblem(source)
+export function createReleaseManifest(source, { publicRelease = false } = {}) {
+  const problem = publicRelease ? publicReleaseManifestProblem(source) : releaseManifestProblem(source)
   if (problem) throw new Error(`cannot create Cordis release artifact: ${problem}`)
   const {
     dependencies: _dependencies,
@@ -75,7 +126,8 @@ export function createReleaseManifest(source) {
       './client': './dist/client.js',
       './package.json': './package.json',
     },
-    files: [...RELEASE_ARTIFACT_FILES.filter((path) => path !== 'package.json')],
+    files: [...(publicRelease ? PUBLIC_RELEASE_ARTIFACT_FILES : RELEASE_ARTIFACT_FILES)
+      .filter((path) => path !== 'package.json')],
     dsh: structuredClone(source.dsh),
   }
 }
@@ -85,9 +137,13 @@ export function createReleaseManifest(source) {
  * directory: the bundled host resolves ../data/registry-snapshot.json from
  * dist/index.js, so flattening the host entry breaks offline fallback.
  */
-export function createReleaseArtifact(appDir) {
+export function createReleaseArtifact(appDir, { publicRelease = false } = {}) {
   const sourceManifest = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8'))
-  const manifest = createReleaseManifest(sourceManifest)
+  if (publicRelease) {
+    const problem = publicReleaseArtifactProblem(appDir, sourceManifest)
+    if (problem) throw new Error(`cannot create public Cordis release artifact: ${problem}`)
+  }
+  const manifest = createReleaseManifest(sourceManifest, { publicRelease })
   const pack = mkdtempSync(join(tmpdir(), 'cordis-web-pack-'))
   const packageDir = join(pack, 'package')
   mkdirSync(join(packageDir, 'dist'), { recursive: true })
@@ -99,8 +155,16 @@ export function createReleaseArtifact(appDir) {
   copyFileSync(join(appDir, 'dist', 'index.js'), join(packageDir, 'dist', 'index.js'))
   copyFileSync(join(appDir, 'dist', 'client.js'), join(packageDir, 'dist', 'client.js'))
   copyFileSync(join(appDir, 'dist', 'data', 'registry-snapshot.json'), join(packageDir, 'data', 'registry-snapshot.json'))
+  if (publicRelease) {
+    copyFileSync(join(appDir, PUBLIC_RELEASE_LICENSE_FILE), join(packageDir, PUBLIC_RELEASE_LICENSE_FILE))
+  }
 
   const out = join(pack, 'cordis-mp-web-release-candidate.tgz')
   execFileSync('tar', ['-czf', out, '-C', pack, 'package'])
   return out
+}
+
+/** Create the publication-capable candidate only after its legal metadata is explicit. */
+export function createPublicReleaseArtifact(appDir) {
+  return createReleaseArtifact(appDir, { publicRelease: true })
 }

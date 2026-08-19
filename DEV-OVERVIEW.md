@@ -44,7 +44,7 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
-- 161 tests / 161 pass。
+- 163 tests / 163 pass。
 - 真实 DSH E2E PASS：install → patch disable → activate → restart → dsh-market
   路由 200。
 - `verifyInstalled` 已复核 `node_modules` manifest 的 name/version，及
@@ -90,13 +90,18 @@
   BEST_EFFORT 分级。
 - pnpm 仅显式批准 `esbuild` 的构建脚本（`allowBuilds.esbuild: true`）；这是 Web
   打包所需的已声明 devDependency，其余依赖仍不获隐式构建脚本授权。
-- 发布候选已补齐：`@cordis-mp/web` 的私有源码 manifest 明确声明
+- 独立候选打包已实现并完成本地验证：`@cordis-mp/web` 的私有源码 manifest 明确声明
   `dsh.platforms: [web, desktop]` 与 `dsh.engines.dsh: >=0.1.0-rc.7 <0.2.0`；
   `pack-smoke` 生成无 workspace 依赖、可公开打包的独立候选，且保留 `dist/`，从而修复 host
   的 `../data/registry-snapshot.json` 离线 fallback 路径。新增测试会实际解包、强制网络失败并
   验证该 snapshot fallback；真实 DSH E2E 仍通过。`pnpm run pack:check` 现同时对各 workspace
   和该临时候选执行无脚本 `npm pack --dry-run`。源码包依旧 `private: true`；没有 npm 发布、tag
-  或可见性变更，也不会把本地 pack integrity 当作 registry integrity。
+  或可见性变更，也不会把本地 pack integrity 当作 registry integrity。它仍不是可公开发布的完成品：
+  当前没有 owner 已确认的 license declaration/版权主体，也没有随候选打包的 license 文件；不得从父仓库
+  license 推断或复制。新增的 `pnpm run release:public-check` 是 opt-in 本地门禁：只有在 owner
+  补齐 declaration、`LICENSE` 并完成 build 后，它才会生成候选并复核 archive 与 npm 无脚本、离线
+  dry-run 文件清单；
+  当前预期 fail-closed，且不触发 npm/GitHub/数据库/部署 mutation。
 - 父仓库的单包 npm 同步现有独立只读预检：
   `pnpm plugins:sync -- --pkg=<package> --dry-run --no-assets` 只读取 npm
   packument，并要求包名、latest `dsh.bundle`、精确 version/SHA-512/tarball/
@@ -125,7 +130,7 @@
 5. 8/24 后 codex 对 fc668e4..HEAD 补独立评审。
 
 ## 关键命令
-- 全部测试：`pnpm -r test`（当前 161 tests）
+- 全部测试：`pnpm -r test`（当前 163 tests）
 - 冒烟：`node scripts/dsh-smoke.mjs`
 - 真实 E2E：`node scripts/dsh-e2e-install.mjs`
 - 目标 API 无 mutation 验收：`CORDIS_RUN_API=https://<target>/api/v1 node scripts/cordis-run-contract-probe.mjs`
@@ -133,6 +138,8 @@
 - 构建：`node apps/web/scripts/build.mjs`
 - 打包 smoke tarball：`node apps/web/scripts/pack-smoke.mjs`
 - npm pack 预检：`pnpm run pack:check`
+- 公开发布候选本地门禁（当前因缺少 owner 确认的 license 而预期 fail-closed）：
+  `pnpm run release:public-check`
 - 发布后单包只读 registry 预检（在父仓库）：
   `pnpm plugins:sync -- --pkg=@cordis-mp/web --dry-run --no-assets`
 - Desktop 生产只读 smoke（在 Desktop 仓库）：`pnpm verify:cordis-preset && pnpm verify:cordis-market`

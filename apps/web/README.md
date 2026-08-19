@@ -1,7 +1,7 @@
 # @cordis-mp/web
 
-Cordis marketplace plugin for DeepSeek Harness (DSH). The distributable
-artifact bundles the marketplace host and client, while keeping the plugin's
+Cordis marketplace plugin for DeepSeek Harness (DSH). The locally verified
+standalone candidate bundles the marketplace host and client, while keeping the plugin's
 catalog/install lifecycle behind the existing guarded DSH host routes.
 
 ## DSH compatibility
@@ -43,3 +43,13 @@ maintainers, provenance policy, and release version. Once published, run the
 parent repository's registry sync so cordis.run can capture the registry's
 exact tarball URL and SHA-512 integrity; hand-written catalog source data is
 not accepted.
+
+The current source has no selected legal license declaration or bundled license file. That
+legal decision must be made and added to the generated artifact before any
+public publication; it must not be copied from the parent repository by
+assumption.
+
+After that owner decision, run `pnpm run release:public-check` from the
+repository root before publishing. It locally verifies the declaration, a
+bounded regular `LICENSE` file, the generated candidate, and npm's script-free
+offline dry-run file list; it does not publish or contact a registry.

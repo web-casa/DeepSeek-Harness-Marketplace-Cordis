@@ -97,9 +97,10 @@ them as an install source when `source` is absent or invalid.
   for an all-platform administrative view.
 - Prefer `cursor` + `limit` (limit 1–100). Preserve the response cursor exactly;
   it is opaque and may be `null` at the end.
-- Existing Desktop request code may temporarily send `page` + `per_page`; the
-  fixture maps it to the same result shape. Do not expect `total`, a numeric
-  response `page`, or response `per_page`.
+- The completed Desktop request path sends `cursor` + `limit`. The server and
+  fixture retain `page` + `per_page` only for old-client compatibility; do not
+  add them back to Desktop. Do not expect `total`, a numeric response `page`,
+  or response `per_page`.
 - Use `count` as the filtered total and `page.hasMore` to enable the next-page
   control. Do not derive count from the returned slice.
 
@@ -132,7 +133,9 @@ Required adapter cases:
 
 - nested `source` and bilingual `description` deserialize unchanged;
 - `platform=desktop` returns both fixture entries, then opaque cursor advances;
-- legacy `page/per_page` returns the same `count + page` object;
+- Desktop sends `cursor/limit` and receives the same `count + page` object on
+  each opaque-cursor follow-up; legacy `page/per_page` is server-only
+  compatibility coverage;
 - `category=agent` filters to `desktop-only`;
 - ETag revalidation returns 304 after a cached list;
 - detail 404 is parsed as `NOT_FOUND` JSON;

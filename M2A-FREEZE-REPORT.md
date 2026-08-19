@@ -19,7 +19,8 @@ Windows 平台为 BEST_EFFORT，需 Windows CI 实证后才可宣称 FULL。
 | G10 故障注入闭环 | **CLOSED** | 全点 deterministic exit(43) + SIGKILL 双轨代表场景；不变量测试通过 |
 
 ## 测试
-- 92 tests / 92 pass
+- 冻结时测量：92 tests / 92 pass（这是 S9 收口的历史证据；当前回归数量与
+  后续验证记录见 `DEV-OVERVIEW.md`，不改变本报告的 POSIX FULL gate 结论）
 - 从 packages/journal-core 目录运行：`node --test test/*.test.mjs`（或 `npm test`）
 
 ## 已完成的原待办

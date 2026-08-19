@@ -8,7 +8,8 @@
 
 ## 0. 基础约定
 - Base：`https://cordis.run/api/v1`
-- 所有响应 `Content-Type: application/json; charset=utf-8`
+- 列表、详情与 JSON error 响应使用 `Content-Type: application/json; charset=utf-8`；
+  `304` 无响应体，§4 的 preset 下载是 `application/zip` 例外。
 - 支持 `ETag` / `If-None-Match`（304）
 - 错误统一：
   ```json
@@ -116,7 +117,8 @@ Desktop 的 `feat/cordis-v4-desktop` 已采用以下 wire shape；这些规则�
 - `description: { zh, en }` 或 `Option<LocalizedText>`；
 - 搜索响应解析 `count: u32` + `page: { cursor, hasMore, limit }`；
 - 404 建议解析 `{ error: { code, message } }` 并透出 `message`；
-- 桌面仍发送 `page` / `per_page` 查询参数可以，fixture 已兼容。
+- 已完成的 Desktop 客户端发送 `cursor` / `limit`；服务端与 fixture 保留
+  `page` / `per_page` 仅供旧客户端短期兼容，不能成为新的安装客户端实现依据。
 
 ## 6. 联调验收清单
 - [x] 生产 `platform=desktop&limit=1` 返回直接 JSON、ETag/304、`count + page`；Desktop

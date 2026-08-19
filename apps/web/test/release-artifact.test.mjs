@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
+  createPublicReleaseArtifact,
+  MAX_PUBLIC_RELEASE_LICENSE_BYTES,
+  PUBLIC_RELEASE_ARTIFACT_FILES,
   RELEASE_ARTIFACT_FILES,
   RELEASE_DSH_ENGINE,
+  publicReleaseArtifactProblem,
+  publicReleaseManifestProblem,
   releaseManifestProblem,
 } from '../scripts/release-artifact.mjs'
 
@@ -33,6 +38,70 @@ test('release candidate packer fails closed when private source metadata loses a
   const accidentallyPublicSource = structuredClone(sourceManifest)
   accidentallyPublicSource.private = false
   assert.match(releaseManifestProblem(accidentallyPublicSource) ?? '', /must remain private/)
+})
+
+test('public release gate requires explicit legal metadata without changing the local candidate gate', () => {
+  const sourceManifest = JSON.parse(readFileSync(join(app, '..', 'package.json'), 'utf8'))
+  assert.equal(releaseManifestProblem(sourceManifest), null)
+  assert.match(publicReleaseManifestProblem(sourceManifest) ?? '', /license declaration/)
+
+  const unlicensed = structuredClone(sourceManifest)
+  unlicensed.license = 'UNLICENSED'
+  assert.match(publicReleaseManifestProblem(unlicensed) ?? '', /must not declare license UNLICENSED/)
+
+  const declaredWithoutArtifact = structuredClone(sourceManifest)
+  declaredWithoutArtifact.license = 'MIT'
+  assert.match(publicReleaseArtifactProblem(join(app, '..'), declaredWithoutArtifact) ?? '', /checked-in LICENSE file/)
+})
+
+test('public release candidate includes the declared bounded LICENSE artifact', () => {
+  const sourceManifest = JSON.parse(readFileSync(join(app, '..', 'package.json'), 'utf8'))
+  const compliantManifest = structuredClone(sourceManifest)
+  compliantManifest.license = 'MIT'
+  const fixture = mkdtempSync(join(tmpdir(), 'cordis-public-release-fixture-'))
+  let artifactDir = null
+  let unpack = null
+  try {
+    writeFileSync(join(fixture, 'package.json'), JSON.stringify(compliantManifest, null, 2) + '\n')
+    writeFileSync(join(fixture, 'README.md'), '# fixture\n')
+    writeFileSync(join(fixture, 'cordis.patch.yml'), '- insert: []\n')
+    writeFileSync(join(fixture, 'LICENSE'), '')
+    assert.match(publicReleaseArtifactProblem(fixture, compliantManifest) ?? '', /LICENSE must not be empty/)
+    writeFileSync(join(fixture, 'LICENSE'), Buffer.alloc(MAX_PUBLIC_RELEASE_LICENSE_BYTES + 1, 0x61))
+    assert.match(publicReleaseArtifactProblem(fixture, compliantManifest) ?? '', /must not exceed/)
+    writeFileSync(join(fixture, 'LICENSE'), 'MIT fixture license\n')
+    mkdirSync(join(fixture, 'dist', 'data'), { recursive: true })
+    writeFileSync(join(fixture, 'dist', 'index.js'), 'export {}\n')
+    writeFileSync(join(fixture, 'dist', 'client.js'), 'export {}\n')
+    writeFileSync(join(fixture, 'dist', 'data', 'registry-snapshot.json'), '{}\n')
+
+    assert.equal(publicReleaseArtifactProblem(fixture, compliantManifest), null)
+    const artifact = createPublicReleaseArtifact(fixture)
+    artifactDir = dirname(artifact)
+    const listing = execFileSync('tar', ['-tzf', artifact], { encoding: 'utf8' }).trim().split('\n')
+    for (const path of PUBLIC_RELEASE_ARTIFACT_FILES) {
+      assert.ok(listing.includes(`package/${path}`), `missing public artifact ${path}`)
+    }
+    const manifest = JSON.parse(execFileSync('tar', ['-xOzf', artifact, 'package/package.json'], { encoding: 'utf8' }))
+    assert.equal(manifest.license, 'MIT')
+    assert.deepEqual(manifest.files, PUBLIC_RELEASE_ARTIFACT_FILES.filter((path) => path !== 'package.json'))
+
+    unpack = mkdtempSync(join(tmpdir(), 'cordis-public-release-pack-'))
+    execFileSync('tar', ['-xzf', artifact, '-C', unpack])
+    const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+    const packed = JSON.parse(execFileSync(npm, ['pack', '--dry-run', '--ignore-scripts', '--offline', '--json'], {
+      cwd: join(unpack, 'package'),
+      encoding: 'utf8',
+    }))
+    const packedFiles = new Set(packed[0].files.map((file) => file.path))
+    for (const path of PUBLIC_RELEASE_ARTIFACT_FILES) {
+      assert.ok(packedFiles.has(path), `npm pack omitted public artifact ${path}`)
+    }
+  } finally {
+    if (unpack) rmSync(unpack, { recursive: true, force: true })
+    if (artifactDir) rmSync(artifactDir, { recursive: true, force: true })
+    rmSync(fixture, { recursive: true, force: true })
+  }
 })
 
 test('release candidate has strict DSH metadata and retains the snapshot-relative layout', async () => {

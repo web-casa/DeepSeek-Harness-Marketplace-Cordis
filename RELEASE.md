@@ -3,11 +3,17 @@
 ## Current release candidate
 
 - Version: `0.1.0` (root, six core workspaces, and `@cordis-mp/web` are aligned).
-- Status: the technical release candidate is ready; no npm publication, tag, or visibility
-  change has been performed.
+- Status: a locally verified standalone implementation candidate exists; it is
+  **not publish-ready**. No npm publication, tag, or visibility change has been
+  performed.
 - Package policy: every workspace is currently `private: true`. Keep that protection until
   the package owner explicitly decides which packages, scope, license, maintainers, and
   provenance policy are public.
+- Legal metadata boundary: the source manifest currently has no `license` field
+  and the candidate has no checked-in license file. The owner must select the
+  legal license and copyright holder; then add the matching manifest declaration
+  and artifact file before public-release validation. Do not infer it from the
+  parent repository's license.
 
 ## Artifact boundary
 
@@ -46,6 +52,22 @@ implementation directories are absent. The candidate tarball exists only under t
 directory; no registry artifact is written or published, and its local pack integrity is never
 used as an installation integrity.
 
+## Public-release legal and artifact gate
+
+After the owner has supplied the legal declaration and a checked-in `LICENSE` file, but before
+any `npm publish`, run:
+
+```bash
+pnpm run release:public-check
+```
+
+This is intentionally separate from normal CI because the current source has no legal metadata
+yet and therefore exits 1 by design. It validates a non-empty, non-`UNLICENSED` declaration, a
+regular non-empty `LICENSE` no larger than 128 KiB, the generated candidate archive, and npm's
+own `pack --dry-run --ignore-scripts --offline --json` file list. It makes no registry, GitHub, database,
+deployment, publish, tag, or visibility mutation. It verifies presence and candidate inclusion;
+the owner remains responsible for the legal choice and validity of its license expression.
+
 ## After an owner-approved npm publication
 
 The generated candidate is not evidence of a registry artifact.  Once the owner has published
@@ -79,9 +101,13 @@ their visibility.
 Do not remove `private: true`, run `npm publish`, or create a release tag until the owner has
 approved all of the following:
 
-1. Public package set and dependency publication order (three packages currently use
-   `workspace:*` dependencies).
-2. Per-package README, license, ownership/access, npm provenance, and registry policy.
+1. Public package set and dependency publication order. For the current release
+   design, the only intended public package is the generated self-contained
+   `@cordis-mp/web` candidate: it has no workspace dependencies, while every
+   source workspace stays private. A package rename or additional public package
+   is a separate migration and review.
+2. Candidate README, license file and declaration, ownership/access, npm
+   maintainers, provenance, and registry policy.
 3. A release version if it is not `0.1.0`; update all aligned manifests intentionally and rerun
    the full preflight.
 4. A public artifact passes the registry-only preflight and is successfully synchronized by the
