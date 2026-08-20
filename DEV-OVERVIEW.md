@@ -44,12 +44,14 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
-- **市场宿主公开产品面（待父仓库常规应用部署）**：父仓库已实现 Cordis 专属
+- **市场宿主公开产品面（已上线）**：父仓库已实现 Cordis 专属
   `/marketplace` 落地页、首页介绍区、导航/robots/sitemap、以及自包含的品牌 SVG；公开页只链接
   目录、指南和 npm，不创建 `/cordis-mp/install`、activate 或 uninstall mutation 通道。对应组件测试、
   父仓库 TypeScript、ESLint、unit tests、production build 与 Knip 已通过。Knip 对同步 CLI 的动态导入
-  有文件级、已说明的 exports 豁免：它保留 `.env.local` 先于数据库模块初始化的 fail-closed 加载顺序。尚未以生产 HTTP `200` 验收，故不得称
-  `https://cordis.run/marketplace` 已上线；部署后应先做一次只读页面/metadata 验收。npm `0.1.1`
+  有文件级、已说明的 exports 豁免：它保留 `.env.local` 先于数据库模块初始化的 fail-closed 加载顺序。
+  生产 Zeabur 已部署父仓库 `f113cb2`；`https://cordis.run/marketplace`、`/en/marketplace`、首页介绍区及
+  新版 64×64 SVG 均以只读 HTTP `200` 验收，canonical/alternate 正确，非 Cordis 的
+  `https://mifar.net/marketplace` 返回 404。npm `0.1.1`
   README 的历史“未发布”措辞也只能由下一次经授权的不可变版本发布纠正。
 - **2026-08-20 生产收尾（覆盖下方同日但较早的历史 `count=1`、未发布和 E2E 待做记录）**：
   `https://cordis.run/api/v1/plugins?platform=desktop&limit=100` 现直接返回带 ETag 的 JSON，
