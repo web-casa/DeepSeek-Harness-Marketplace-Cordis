@@ -7,8 +7,8 @@
   and host-entry conflict protection. `@webcasa/web@0.1.0` was already published
   public with dist-tag `latest` by the approved direct interactive/2FA bootstrap;
   it is immutable and has no OIDC provenance. The `0.1.1` candidate has passed its
-  latest post-review local gate (200/200 workspace tests, including journal-core POSIX FULL
-  96/96), but must be pushed to `main`, then be released through the protected Trusted
+  latest post-review local gate (201/201 workspace tests, including journal-core 97/97 with
+  its original POSIX FULL 96-test gate intact), but must be pushed to `main`, then be released through the protected Trusted
   Publishing workflow after its human approvers are configured.
 - Package policy: every source workspace remains `private: true`. The only
   intended public package is the generated, dependency-free `@webcasa/web`
@@ -194,7 +194,8 @@ unpublished `0.1.1` patch candidate.
   inspection refuses a foreign bundle that would pre-disable its `cordis-mp` entry id.
 
 ### Validation
-- 200/200 workspace tests (including journal-core POSIX FULL 96/96), host smoke, DSH smoke,
+- 201/201 workspace tests (including journal-core 97/97 with its original POSIX FULL 96-test
+  gate intact), host smoke, DSH smoke,
   fixture DSH install/pending/explicit-activate/restart E2E, pack/public-candidate gates,
   actionlint, and production dependency audit passed.
 - A production self-refusal request returns `409 SELF_INSTALL_FORBIDDEN`; this is a safety

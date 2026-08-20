@@ -314,23 +314,43 @@ function failpoint(name2, ctx = {}) {
 
 // packages/journal-core/src/durable.mjs
 var fsyncWarning = false;
-function fsyncDir(dir) {
+var WINDOWS_BEST_EFFORT_FSYNC_CODES = /* @__PURE__ */ new Set(["EISDIR", "EPERM", "EINVAL", "ENOTSUP"]);
+function isWindowsBestEffortFsyncError(error, platform = process.platform) {
+  return platform === "win32" && WINDOWS_BEST_EFFORT_FSYNC_CODES.has(error?.code);
+}
+function warnBestEffortFsync(warn = console.warn) {
+  if (!fsyncWarning) {
+    warn("[journal-core] fsync unavailable on win32; durability tier=BEST_EFFORT");
+    fsyncWarning = true;
+  }
+}
+function fsyncDescriptor(fd, { fsync = fsyncSync, platform = process.platform, warn = console.warn } = {}) {
   try {
-    const fd = openSync(dir, "r");
-    try {
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
+    fsync(fd);
+  } catch (error) {
+    if (isWindowsBestEffortFsyncError(error, platform)) {
+      warnBestEffortFsync(warn);
+      return false;
     }
-  } catch (e) {
-    if (process.platform === "win32" && ["EISDIR", "EPERM", "EINVAL", "ENOTSUP"].includes(e.code)) {
-      if (!fsyncWarning) {
-        console.warn("[journal-core] dir fsync unavailable on win32; durability tier=BEST_EFFORT");
-        fsyncWarning = true;
-      }
+    throw error;
+  }
+  return true;
+}
+function fsyncDir(dir) {
+  let fd;
+  try {
+    fd = openSync(dir, "r");
+  } catch (error) {
+    if (isWindowsBestEffortFsyncError(error)) {
+      warnBestEffortFsync();
       return;
     }
-    throw e;
+    throw error;
+  }
+  try {
+    fsyncDescriptor(fd);
+  } finally {
+    closeSync(fd);
   }
 }
 function atomicFile(path, content, { mode = 384, exclusive = false } = {}) {
@@ -346,7 +366,7 @@ function atomicFile(path, content, { mode = 384, exclusive = false } = {}) {
   chmodSync(tmp, mode);
   const fd2 = openSync(tmp, "r");
   try {
-    fsyncSync(fd2);
+    fsyncDescriptor(fd2);
   } finally {
     closeSync(fd2);
   }
@@ -387,7 +407,7 @@ function appendRecord(path, line) {
   failpoint("appendRecord:after-write", { path });
   const fd2 = openSync(path, "r");
   try {
-    fsyncSync(fd2);
+    fsyncDescriptor(fd2);
   } finally {
     closeSync(fd2);
   }
@@ -414,7 +434,7 @@ function replaceTarget(path, data, mode = 384) {
   chmodSync(tmp, mode);
   const fd2 = openSync(tmp, "r");
   try {
-    fsyncSync(fd2);
+    fsyncDescriptor(fd2);
   } finally {
     closeSync(fd2);
   }

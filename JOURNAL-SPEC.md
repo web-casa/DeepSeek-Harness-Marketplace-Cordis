@@ -15,6 +15,9 @@ target rel 封闭 allowlist：`package.json`、`pnpm-lock.yaml`、
   “检查后到 replace-target/unlink-target-durable 前”、“终检后到 marker 前”。
 - 平台分级：`FULL` = POSIX + 同文件系统原子 rename CAS + 目录 fsync +
   进程身份判定；否则 `BEST_EFFORT`。
+- Windows `BEST_EFFORT`：若常规文件或目录的 `fsync` 报已知能力限制
+  （`EISDIR`/`EPERM`/`EINVAL`/`ENOTSUP`），记录一次降级告警后继续；未知
+  I/O 错误及所有 POSIX `fsync` 错误仍必须失败，不能被降级吞掉。
 
 ## 2. 数据模型
 

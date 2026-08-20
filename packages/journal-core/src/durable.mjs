@@ -4,19 +4,44 @@ import { randomBytes } from 'node:crypto'
 import { failpoint } from './failpoints.mjs'
 
 let fsyncWarning = false
+const WINDOWS_BEST_EFFORT_FSYNC_CODES = new Set(['EISDIR', 'EPERM', 'EINVAL', 'ENOTSUP'])
 export function durabilityTier() { return process.platform === 'win32' ? 'BEST_EFFORT' : 'FULL' }
-export function fsyncDir(dir) {
+function isWindowsBestEffortFsyncError(error, platform = process.platform) {
+  return platform === 'win32' && WINDOWS_BEST_EFFORT_FSYNC_CODES.has(error?.code)
+}
+function warnBestEffortFsync(warn = console.warn) {
+  if (!fsyncWarning) {
+    warn('[journal-core] fsync unavailable on win32; durability tier=BEST_EFFORT')
+    fsyncWarning = true
+  }
+}
+// Windows runners can reject fsync for both directory and regular-file handles.
+// Only those known unsupported errors downgrade; POSIX and unexpected I/O errors stay fatal.
+export function fsyncDescriptor(fd, { fsync = fsyncSync, platform = process.platform, warn = console.warn } = {}) {
   try {
-    const fd = openSync(dir, 'r')
-    try { fsyncSync(fd) } finally { closeSync(fd) }
-  } catch (e) {
+    fsync(fd)
+  } catch (error) {
+    if (isWindowsBestEffortFsyncError(error, platform)) {
+      warnBestEffortFsync(warn)
+      return false
+    }
+    throw error
+  }
+  return true
+}
+export function fsyncDir(dir) {
+  let fd
+  try {
+    fd = openSync(dir, 'r')
+  } catch (error) {
     // Windows 目录句柄语义差异：FULL 降级为 BEST_EFFORT，仅告警一次。
-    if (process.platform === 'win32' && ['EISDIR','EPERM','EINVAL','ENOTSUP'].includes(e.code)) {
-      if (!fsyncWarning) { console.warn('[journal-core] dir fsync unavailable on win32; durability tier=BEST_EFFORT'); fsyncWarning = true }
+    if (isWindowsBestEffortFsyncError(error)) {
+      warnBestEffortFsync()
       return
     }
-    throw e
+    throw error
   }
+  try { fsyncDescriptor(fd) } finally { closeSync(fd) }
 }
 export function atomicFile(path, content, { mode = 0o600, exclusive = false } = {}) {
   failpoint('atomicFile:before', { path, exclusive })
@@ -27,7 +52,7 @@ export function atomicFile(path, content, { mode = 0o600, exclusive = false } = 
   try { writeFileSync(fd, content) } finally { closeSync(fd) }
   // chmod 后再 fsync，保证 mode 元数据 durable（v7 顺序）
   chmodSync(tmp, mode)
-  const fd2 = openSync(tmp, 'r'); try { fsyncSync(fd2) } finally { closeSync(fd2) }
+  const fd2 = openSync(tmp, 'r'); try { fsyncDescriptor(fd2) } finally { closeSync(fd2) }
   failpoint('atomicFile:after-write', { path, exclusive })
   if (exclusive) {
     // link(tmp, path) 是原子 create-exclusive；成功后删除 tmp
@@ -49,7 +74,7 @@ export function appendRecord(path, line) {
   const fd = openSync(path, 'a', 0o600)
   try { writeFileSync(fd, line + '\n') } finally { closeSync(fd) }
   failpoint('appendRecord:after-write', { path })
-  const fd2 = openSync(path, 'r'); try { fsyncSync(fd2) } finally { closeSync(fd2) }
+  const fd2 = openSync(path, 'r'); try { fsyncDescriptor(fd2) } finally { closeSync(fd2) }
   failpoint('appendRecord:before-dirfsync', { path })
   fsyncDir(dirname(path))
   failpoint('appendRecord:after-dirfsync', { path })
@@ -64,7 +89,7 @@ export function replaceTarget(path, data, mode = 0o600) {
   try { writeFileSync(fd, data) } finally { closeSync(fd) }
   failpoint('replaceTarget:after-write', { path })
   chmodSync(tmp, mode)
-  const fd2 = openSync(tmp, 'r'); try { fsyncSync(fd2) } finally { closeSync(fd2) }
+  const fd2 = openSync(tmp, 'r'); try { fsyncDescriptor(fd2) } finally { closeSync(fd2) }
   failpoint('replaceTarget:before-rename', { path })
   renameSync(tmp, path)
   failpoint('replaceTarget:after-rename', { path })

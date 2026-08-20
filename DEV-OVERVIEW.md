@@ -44,8 +44,8 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
-- 200 tests / 200 pass（2026-08-20 `0.1.1` 候选的最新完整本地门禁；其中
-  journal-core POSIX FULL 96/96）。
+- 201 tests / 201 pass（2026-08-20 `0.1.1` 候选的最新完整本地门禁；其中
+  journal-core 97/97，原 POSIX FULL 96-test gate 保持不变）。
 - 真实 DSH E2E PASS：install → patch disable → activate → restart → dsh-market
   路由 200。
 - `verifyInstalled` 已复核 `node_modules` manifest 的 name/version，及
@@ -122,8 +122,9 @@
   remote；`publish.yml` 只允许 `main`，先在无 OIDC token 的 job 重跑 workspace/pack/host/DSH E2E，再由唯一
   `id-token: write` job 下载 SHA-512 复核后的 tarball 发布。待 GitHub `npm` environment 的人类审批者确认并
   完成 `npm trust github` 后，`0.1.1` 才能通过该受保护的 Trusted Publishing 工作流发布。
-- 166/166 是本轮全项目复审前的历史本地门禁记录。复审后的最新门禁为 200/200 workspace tests
-  （其中 journal-core POSIX FULL 96/96）、`pack:check`、`release:public-check`、host/DSH smoke、
+- 166/166 是本轮全项目复审前的历史本地门禁记录。复审后的最新门禁为 201/201 workspace tests
+  （其中 journal-core 97/97，原 POSIX FULL 96-test gate 保持不变）、`pack:check`、
+  `release:public-check`、host/DSH smoke、
   fixture 正向 install → pending → explicit activate → restart E2E、生产目录 self-refusal、
   actionlint、production dependency audit 与 `git diff --check`。其生成 tarball 的 script-free
   `npm publish --dry-run --access public --tag latest` 也通过；这不是发布。
