@@ -44,10 +44,11 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
-- 203 tests / 203 pass（2026-08-20 `0.1.1` 候选的最新完整本地门禁；其中
+- 206 tests / 206 pass（2026-08-20 `0.1.1` 候选的最新完整本地门禁；其中
   journal-core 97/97，原 POSIX FULL 96-test gate 保持不变）。
-- 真实 DSH E2E PASS：install → patch disable → activate → restart → dsh-market
-  路由 200。
+- 真实 DSH E2E PASS：inspect → patch pre-disable → pending 状态跨重启恢复 →
+  显式 activate → 再次重启 → dsh-market 路由 200。无本地 HTTP 路由的独立插件也可
+  用同一脚本验证配置/DSH 就绪证据；fixture 的路由断言仍保留。
 - `verifyInstalled` 已复核 `node_modules` manifest 的 name/version，及
   `pnpm-lock.yaml` 中该精确 artifact 的 `resolution.integrity`；任何缺失、
   不匹配、非普通文件或超限 lockfile 均 fail-closed 并触发既有回滚路径。
@@ -91,12 +92,21 @@
   profile 未被禁用。
   新 identity 的 `0.1.1` 已是生产目录中唯一 market-host；完整正向生产 DSH E2E 仍需要一个独立、严格
   合规的公开插件条目，不能以该宿主自身自安装代替。
+- 独立候选已完成最小的 strict v4 修复，但尚未公开：owner 的
+  `web-casa/dsh-plugin-pkgseek` 本地 commit `19b5bf7` 计划发布
+  `dsh-plugin-pkgseek@0.1.1`，只新增 `dsh.platforms: [web, desktop]` 与
+  `dsh.engines.dsh: >=0.1.0-rc.7 <0.2.0`。其 26/26 单测、无脚本 pack、父仓库
+  strict preflight 模拟，以及隔离 DSH `plugin add → dump-config → web` 启动均已通过；
+  未 push、未 npm publish、未写生产目录，因此不能称为公开条目或生产 E2E。
 - fixture 已对齐 cursor + `count/page`、`page/per_page` 兼容、ETag/304、JSON
   error、canonical screenshot；`scripts/cordis-run-contract-probe.mjs` 可在
-  部署后做无 mutation 的目标验收，DSH E2E 也可显式通过 `CORDIS_RUN_API` 切换。
+  部署后做无 mutation 的目标验收。DSH E2E 可显式通过 `CORDIS_RUN_API` 切换，
+  外部独立插件不需要伪造 HTTP route；可选 `CORDIS_E2E_PLUGIN_ROUTE` 只用于确有
+  本地路由的插件。
 - Desktop 的 `feat/cordis-v4-desktop` 已在独立源码树复验：嵌套 DTO、`platform=desktop`、cursor、
   ETag/304、JSON 404、严格 pending/explicit activate 与 preset 200 直出适配仍在。新增
-  `pnpm verify:cordis-market` 只读生产 smoke，实际通过直接 JSON、ETag/304、JSON 404；
+  `pnpm verify:cordis-market` 只读生产 smoke 已再次通过直接 JSON、ETag/304、JSON 404，
+  并对 `webcasa-web` 的 nested source/integrity/engine wire 完成只读复核；
   `pnpm verify:cordis-preset` 也通过同域 `200 application/zip`；Rust nextest 为 sidecar 35/35、
   Tauri 97/97，覆盖率门槛也已复核。生产目录现在有已同步条目，但尚未执行并记录 Desktop 的
   install → pending → explicit Activate → restart E2E；不得以结构 smoke 代替该 E2E，Microsoft
@@ -151,7 +161,7 @@
   `npm trust github` 与 `npm trust list` 均要求 owner 完成互动式 2FA。更名后的新 npm 包现已存在，
   `0.1.1` direct interactive/2FA bootstrap 已完成；但其 OIDC trust 尚未建立或验证，只能用于随后明确
   版本的发布。workflow 不再预填 `0.1.1`，并会在 staging 前拒绝已存在的 npm version。
-- 166/166 是本轮全项目复审前的历史本地门禁记录。复审后的最新门禁为 203/203 workspace tests
+- 166/166 是本轮全项目复审前的历史本地门禁记录。复审后的最新门禁为 206/206 workspace tests
   （其中 journal-core 97/97，原 POSIX FULL 96-test gate 保持不变）、`pack:check`、
   `release:public-check`、host/DSH smoke、
   fixture 正向 install → pending → explicit activate → restart E2E、生产目录 self-refusal、
@@ -182,8 +192,9 @@
    source cutover 已完成；它仍没有 OIDC provenance。后续新版本发布前，需建立并只读复核该包的 npm
    GitHub OIDC trust；不得把旧 `@webcasa/web` identity 或 direct bootstrap 误报为 provenance。父仓库的
    Apache-2.0 文件没有被复制或套用。
-2. 取得独立、严格合规的公开插件条目后，运行真实生产 DSH 的 install → pending → explicit activate →
-   restart E2E；市场宿主自身必须继续拒绝，不能用自安装伪造正向验收。以已审核公开 slug 运行 Desktop 的
+2. 先经 owner 确认 push/publish `dsh-plugin-pkgseek@0.1.1`，并用 exact registry artifact 做只读
+   preflight、扫描和 owner-approved category 同步；随后运行真实生产 DSH 的 install → pending recovery →
+   explicit activate → restart E2E。市场宿主自身必须继续拒绝，不能用自安装伪造正向验收。以已审核公开 slug 运行 Desktop 的
    `CORDIS_MARKET_PROBE_SLUG=<slug> pnpm verify:cordis-market`，再执行用户确认的 Desktop 安装→pending→
    显式 Activate→重启 E2E。若需 Microsoft Store
    发布，还要走独立审查后更新 `store-curated-plugins.json`，不得提前放宽 allowlist。
@@ -191,7 +202,8 @@
 ## 关键命令
 - 全部测试：`pnpm -r test`（以当前 CI 输出为准）
 - 冒烟：`node scripts/dsh-smoke.mjs`
-- 真实 E2E：`node scripts/dsh-e2e-install.mjs`
+- 真实 fixture E2E：`node scripts/dsh-e2e-install.mjs`
+- 外部独立条目 E2E（无路由亦可）：`CORDIS_RUN_API=https://<target>/api/v1 CORDIS_E2E_SLUG=<slug> node scripts/dsh-e2e-install.mjs`
 - 目标 API 无 mutation 验收：`CORDIS_RUN_API=https://<target>/api/v1 node scripts/cordis-run-contract-probe.mjs`
 - 生产目录宿主拒绝验收：`CORDIS_RUN_API=https://cordis.run/api/v1 CORDIS_E2E_SLUG=webcasa-web CORDIS_E2E_EXPECT_SELF_REFUSAL=1 node scripts/dsh-e2e-install.mjs`
 - 父仓库 v4 上线 runbook：`../docs/CORDIS-API-V4.md`
@@ -202,7 +214,7 @@
   `pnpm run release:public-check`
 - 发布后单包只读 registry 预检（在父仓库）：
   `pnpm plugins:sync -- --pkg=@webcasa/deepseek-harness-marketplace --dry-run --no-assets`
-- 生产 guarded 单宿主切换（仅在父仓库提交部署并由发布操作员再次确认后）：
+- 已完成的生产 guarded 单宿主切换（历史记录；不得重跑）：
   `pnpm plugins:sync -- --pkg=@webcasa/deepseek-harness-marketplace --replace-package=@webcasa/web --expected-replacement-slug=webcasa-web --expected-version=0.1.1 --expected-integrity=sha512-nlgpAdjkDdMe21zbFa9XSI1Nq68uwl4c4ulldOhhhygoEP1zBfdWSMl8P9qAO71K2w7DFXtyeAFC1WTTySp9yA== --expected-tarball=https://registry.npmjs.org/@webcasa/deepseek-harness-marketplace/-/deepseek-harness-marketplace-0.1.1.tgz --category=dev-assistant --no-assets`
 - Desktop 生产只读 smoke（在 Desktop 仓库）：`pnpm verify:cordis-preset && pnpm verify:cordis-market`
 - CI 工作流静态校验：`actionlint .github/workflows/ci.yml .github/workflows/publish.yml`

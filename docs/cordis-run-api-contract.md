@@ -6,8 +6,9 @@
 > preflight 并同步，生产 probe 返回 `count=1`。fixture 仍用于独立测试；不得把 fixture E2E、
 > 结构 probe 或市场宿主的 self-refusal 表述为独立插件的生产安装 E2E。
 > 该旧包是历史生产记录。`@webcasa/deepseek-harness-marketplace@0.1.1` 已公开发布为
-> `latest`，并通过独立 registry preflight；在 guarded sync 和旧条目 cutover 完成前，不得把它表述为
-> 目录内可安装条目。
+> `latest`，并通过独立 registry preflight 与 guarded one-host sync/cutover；生产保留
+> `webcasa-web` slug、旧 source 数量为 0、新 source 数量为 1。它仍是市场宿主，不能作为独立
+> 正向安装 E2E 的目标。
 
 ## 0. 基础约定
 - Base：`https://cordis.run/api/v1`
@@ -138,11 +139,11 @@ Desktop 的 `feat/cordis-v4-desktop` 已采用以下 wire shape；这些规则�
   exact version/SHA-512/tarball 均来自 registry，不从 manifest 推断。
 - [x] `@webcasa/deepseek-harness-marketplace@0.1.1` 已公开发布为 `latest`，并以该 exact package name
   完成 strict preflight；version/SHA-512/tarball 均来自 registry。
-- [ ] 为该新包实施并审核 guarded `dev-assistant` sync + `webcasa-web` cutover，确认由同步器生成的 slug
-  不冲突，并使生产目录始终只保留一个可安装 market-host。
-- [ ] 对独立公开 slug 做生产 DSH install → pending → explicit Activate → restart E2E。市场宿主自身
+- [x] guarded `dev-assistant` sync + `webcasa-web` cutover 已完成：保留既有 slug/tool id，
+  旧 source 数量为 0、新 source 数量为 1，严格目录保持 `count=1`。
+- [ ] 对独立公开 slug 做生产 DSH install → pending recovery → explicit Activate → restart E2E。市场宿主自身
   不能作为目标：`0.1.1` 候选会以 `SELF_INSTALL_FORBIDDEN` 拒绝自身包名，并以
-  `HOST_ENTRY_CONFLICT` 拒绝包含 `cordis-mp` entry id 的外部 bundle；它尚未同步到生产目录。
+  `HOST_ENTRY_CONFLICT` 拒绝包含 `cordis-mp` entry id 的外部 bundle；它已同步但仍只能作为宿主。
 - [ ] 以公开 slug 运行 `CORDIS_MARKET_PROBE_SLUG=<slug> pnpm verify:cordis-market`，再做经过
   用户确认的 Desktop install → pending → explicit Activate → restart E2E。
 

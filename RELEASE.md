@@ -8,8 +8,10 @@
   `latest` through the owner-approved direct interactive/2FA bootstrap. The exact public tarball
   has been independently read back from npm: it has the expected package name/version, MIT license,
   repository, DSH metadata, patch, ten-file layout, and registry SHA-512 integrity. It has no OIDC
-  provenance. The production Cordis catalog remains on the historical `@webcasa/web@0.1.0` entry
-  until a guarded one-host cutover is approved and executed.
+  provenance. The guarded one-host cutover has completed: production retains the
+  existing `webcasa-web` slug and tool id, has zero `@webcasa/web` rows and one
+  `@webcasa/deepseek-harness-marketplace@0.1.1` strict artifact row. The live
+  catalog count is therefore `1`, not two market-host entries.
 - Package policy: every source workspace remains `private: true`. The only
   intended public package is the generated, dependency-free
   `@webcasa/deepseek-harness-marketplace`
@@ -133,12 +135,12 @@ all satisfy the strict v4 catalog boundary.  It does not run the database/R2 syn
 path.  A rejection means stop and repair the published metadata; do not hand-write a catalog
 source record.
 
-The owner selected the existing `dev-assistant` Cordis category. A plain single-package sync would
-create a second published market-host entry while `webcasa-web` is still public, so it must not be
-run as a substitute for a reviewed cutover. No mutable command is provided here intentionally. The
-required next mutation is a guarded, tested, one-host replacement that leaves exactly one installable
-host; the owner must explicitly choose whether it preserves the existing API slug or creates a new
-slug and retires the old row. It also needs separate production database authority.
+The owner selected the existing `dev-assistant` Cordis category. The guarded
+one-host replacement has been executed with a verified backup and exact
+registry artifact attestation; it preserved `webcasa-web` and left exactly one
+installable market-host. Do not rerun the historical cutover command. Any
+future source replacement remains a separate production operation with a new
+owner confirmation and backup.
 
 ## Before a later public npm release
 
@@ -173,7 +175,8 @@ bootstrap on 2026-08-20, then passed exact registry preflight and production
 `dev-assistant` synchronization. It has no OIDC provenance and must not be retagged or rewritten.
 `@webcasa/deepseek-harness-marketplace@0.1.1` was then published public with `latest` by the same
 owner-approved direct interactive/2FA method; its exact registry artifact and strict preflight are
-verified, but it is not yet synchronized because the old entry needs a guarded one-host cutover.
+verified, and it is the sole synchronized production market-host after the
+guarded cutover.
 
 ## Release-note template
 
@@ -198,7 +201,7 @@ verified, but it is not yet synchronized because the old entry needs a guarded o
   inspection refuses a foreign bundle that would pre-disable its `cordis-mp` entry id.
 
 ### Validation
-- 203/203 workspace tests (including journal-core 97/97 with its original POSIX FULL 96-test
+- 206/206 workspace tests (including journal-core 97/97 with its original POSIX FULL 96-test
   gate intact), host smoke, DSH smoke,
   fixture DSH install/pending/explicit-activate/restart E2E, pack/public-candidate gates,
   actionlint, and production dependency audit passed.
@@ -213,9 +216,9 @@ verified, but it is not yet synchronized because the old entry needs a guarded o
   acceptance check, not a positive production plugin lifecycle E2E.
 
 ### Known boundary
-- `@webcasa/web@0.1.0` is public, strictly synchronized, and produces production API `count=1` as a
-  historical catalog entry. The new `@webcasa/deepseek-harness-marketplace@0.1.1` identity is public
-  and has passed strict preflight, but is not synchronized yet; a cutover must not leave two
+- `@webcasa/web@0.1.0` is historical only. Production `count=1` is the sole
+  synchronized `@webcasa/deepseek-harness-marketplace@0.1.1` entry under the
+  retained `webcasa-web` slug; any future cutover must still avoid two
   installable market-host entries.
   The original target was the market host itself, so it is not valid evidence for a positive
   production DSH lifecycle E2E. A separate strict public plugin remains required for that E2E.

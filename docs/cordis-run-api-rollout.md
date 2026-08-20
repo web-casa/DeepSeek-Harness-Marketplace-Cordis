@@ -11,11 +11,13 @@ is deployed. A read-only production check on 2026-08-19 confirmed:
 - `GET /api/presets/code/download` returns direct `200 application/zip` without
   a `Location` header.
 
-The strict install catalog currently has `count=0`. This is a correct
-fail-closed result until a public npm artifact supplies the exact latest
-version, SHA-512 integrity, registry tarball, DSH engine, and platform evidence.
-The checks above prove production API structure and preset delivery only; they
-are **not** a production plugin-install or lifecycle E2E pass.
+The strict install catalog currently has `count=1`: the guarded one-host
+cutover retained `webcasa-web` while replacing its source with
+`@webcasa/deepseek-harness-marketplace@0.1.1`. The old source count is zero,
+so the catalog does not expose two installable market hosts. This proves the
+production API structure and preset delivery only; it is **not** a positive
+production plugin-install or lifecycle E2E because the sole entry is the
+market host and must self-refuse.
 
 ## Remaining release and acceptance work
 
@@ -23,9 +25,11 @@ The parent runbook in
 [`../docs/CORDIS-API-V4.md`](../../docs/CORDIS-API-V4.md) remains the procedure
 for a fresh environment or a future v4 deployment change. Do not rerun schema
 migration or synchronization blindly against the already deployed production
-service. The remaining release sequence is publish an owner-approved standalone
-artifact, run its registry-only preflight, perform the guarded registry
-synchronization, and then meet the strict acceptance gates below.
+service. The remaining acceptance sequence is publish an owner-approved
+*independent* artifact, run its registry-only preflight, perform a guarded
+normal registry synchronization with an owner-approved category, and then meet
+the strict acceptance gates below. Do not rerun the completed market-host
+cutover.
 
 The deployed routes provide:
 
@@ -64,14 +68,17 @@ deterministic. It now accepts an external catalog explicitly:
 ```bash
 CORDIS_RUN_API=https://<target>/api/v1 \
 CORDIS_E2E_SLUG=<approved-e2e-slug> \
-CORDIS_E2E_PLUGIN_ROUTE=/<known-plugin-route> \
   node scripts/dsh-e2e-install.mjs
 ```
 
-The target must expose a dedicated, approved E2E plugin whose artifact is safe
-to install in a temporary profile and whose route proves it loaded after restart.
-The script still checks inspect integrity, pre-disable, `--ignore-scripts`,
-lockfile verification, pending activation, explicit activate, and restart.
+`CORDIS_E2E_PLUGIN_ROUTE=/<known-plugin-route>` is optional for plugins that
+actually expose a local HTTP route. Without it, the script proves the declared
+entry ids are disabled before install, survive the pending-state restart,
+become active only after the explicit mutation, and remain active through a
+fresh DSH startup. The target must be an approved independent plugin whose
+artifact is safe to install in a temporary profile. The script still checks
+inspect integrity, pre-disable, `--ignore-scripts`, lockfile verification,
+durable pending recovery, explicit activate, and restart.
 
 Do not make a production-network check mandatory in normal CI until the backend
 owner supplies a stable test target and its E2E plugin contract. The repository

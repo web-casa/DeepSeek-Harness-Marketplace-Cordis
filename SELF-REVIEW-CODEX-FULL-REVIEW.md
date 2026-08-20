@@ -6,8 +6,10 @@
 
 > Publication update: this review's `@webcasa/web@0.1.1` candidate output is historical evidence
 > from before the owner changed the intended public identity. The replacement
-> `@webcasa/deepseek-harness-marketplace@0.1.1` is now public with `latest` and has passed exact
-> registry preflight, but remains absent from the production catalog pending a guarded one-host cutover.
+> `@webcasa/deepseek-harness-marketplace@0.1.1` is now public with `latest`, has passed exact
+> registry preflight, and completed the guarded one-host production cutover under the retained
+> `webcasa-web` slug. The production catalog has exactly one market-host source; the remaining
+> acceptance work is an independent public plugin's positive lifecycle E2E.
 
 ## 已修复的结论
 
@@ -31,10 +33,11 @@
 
 ## 验证
 
-- `pnpm -r test`：198/198 通过；其中 journal-core POSIX FULL 96/96。
+- `pnpm -r test`：206/206 通过；其中 journal-core POSIX FULL 96/96。
 - `node apps/web/scripts/build.mjs`
 - `pnpm run pack:check`
-- `pnpm run release:public-check`：`@webcasa/web@0.1.1` candidate `ready`。
+- `pnpm run release:public-check`：`@webcasa/deepseek-harness-marketplace@0.1.1` candidate
+  `ready`。
 - `node scripts/host-smoke.mjs`
 - `node scripts/dsh-smoke.mjs && node scripts/dsh-e2e-install.mjs`：fixture 的
   install → pending → explicit activate → restart 通过。
@@ -49,7 +52,7 @@
 
 - fixture 生命周期 E2E 和生产 self-refusal 都不是独立公开插件的正向生产 DSH/Desktop E2E。
   该验收仍需要一个独立、严格合规且经 owner 确认的公开条目。
-- At this review snapshot `0.1.1` was not yet published. It is now public by direct interactive/2FA
-  bootstrap; no tag was created, and Trusted Publishing still needs `npm trust github` configuration
-  and verification for a later version.
+- The historical direct-bootstrap candidate was published with interactive 2FA, then passed guarded
+  production cutover. No release tag was created, and Trusted Publishing still needs `npm trust github`
+  configuration and verification for a later version.
 - Windows 仍为 BEST_EFFORT；首个 GitHub Actions Windows green run 前不将其表述为已实证。
