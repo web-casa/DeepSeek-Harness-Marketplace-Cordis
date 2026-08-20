@@ -70,9 +70,12 @@
 - 发布 identity 已更正：DSH patch 和 host 自安装身份现在是
   `@webcasa/deepseek-harness-marketplace@0.1.1`。它已通过 owner-approved direct interactive/2FA
   bootstrap 公开发布为 `latest`；公开 packument 与实际 tarball 的 package name/version、MIT、repository、
-  DSH metadata、patch、10-file layout 和 SHA-512 integrity 均已只读复核。旧
-  `@webcasa/web@0.1.0` 仍是不可改写的历史 npm/生产目录记录；在受控 cutover 前，两个身份不能并列为
-  可安装市场宿主。
+  DSH metadata、patch、10-file layout 和 SHA-512 integrity 均已只读复核。父仓库现已实现 guarded
+  one-host cutover：新/旧 source 均被保留，普通同步和通用 metadata 写入均会 fail-closed；精确
+  replacement pair（含 operator-attested `0.1.1` version/SHA-512/tarball）才会在同一 PostgreSQL
+  事务中锁定 old/new source、保留 `webcasa-web` slug 和既有 tool id，并拒绝双宿主。隔离 PostgreSQL
+  18 E2E 已验证切换后 `count=1`、旧 source 数量为 0、新 `0.1.1` artifact 写入且旧扫描证据清空。
+  该实现尚未部署，且尚未执行生产 catalog mutation。
 - 生产 DSH 验收的结论必须区分：`0.1.0` 的真实目标试运行完成 inspect → pre-disable → install →
   verify → pending，但因目标正是市场宿主自身，pre-disable 禁用了其 `/cordis-mp/activate` 路由，
   activate 收到 405；这不是可接受的正向 E2E。修复后的 `0.1.1` 本地候选会在任何 inspect/journal/
@@ -168,14 +171,14 @@
 1. `@webcasa/web@0.1.0` 的 direct bootstrap、strict preflight、`dev-assistant` 同步、生产 `count=1`
    与 API 契约 probe 均已完成；它没有 OIDC provenance，且只是旧 identity 的历史记录。
    `@webcasa/deepseek-harness-marketplace@0.1.1` 已通过 owner-approved direct interactive/2FA
-   bootstrap 公开发布为 `latest`，并完成 exact registry tarball 和父仓库 strict preflight 复核。待开发/
-   审核的是受 guard 保护的 catalog cutover：目录 source 迁移到新包的同时，旧
-   `@webcasa/web` 停止作为可安装 market-host，最终 `count` 必须持续为 1；API slug 与历史行的
-   处置须由 owner 明确选择，且不得以普通单包 sync 留下两个 host。之后才建立/复核 new package 的
-   OIDC trust。父仓库的 Apache-2.0 文件没有被复制或套用。
-2. 在 owner 授权该 exact cutover 后，以 registry 输出的 exact `0.1.1`、SHA-512 integrity 与 tarball
-   执行同步；不得从包名、README 或 `bundle.patch` 反推制品事实。写入后必须做生产 API `count=1`、详情、
-   ETag/304、JSON 404 的只读 probe。
+   bootstrap 公开发布为 `latest`，并完成 exact registry tarball 和父仓库 strict preflight 复核。
+   guarded catalog cutover 已开发、单测和隔离 PostgreSQL 18 E2E 验证：目录 source 迁移到新包时旧
+   `@webcasa/web` 停止作为可安装 market-host，`count` 保持为 1、API slug 保持 `webcasa-web`；普通
+   单包 sync 无法留下第二 host。待部署此父仓库提交，并在部署后由发布操作员执行已审阅的生产 mutation。
+   之后才建立/复核 new package 的 OIDC trust。父仓库的 Apache-2.0 文件没有被复制或套用。
+2. 部署 guarded cutover 后，以 registry 输出的 exact `0.1.1`、SHA-512 integrity 与 tarball 执行该
+   精确 replacement command；不得从包名、README 或 `bundle.patch` 反推制品事实。写入后先刷新新 source
+   的扫描报告并按既有安全流程复核，再做生产 API `count=1`、详情、ETag/304、JSON 404 的只读 probe。
 3. 取得独立、严格合规的公开插件条目后，运行真实生产 DSH 的 install → pending → explicit activate →
    restart E2E；市场宿主自身必须继续拒绝，不能用自安装伪造正向验收。以已审核公开 slug 运行 Desktop 的
    `CORDIS_MARKET_PROBE_SLUG=<slug> pnpm verify:cordis-market`，再执行用户确认的 Desktop 安装→pending→
@@ -196,6 +199,8 @@
   `pnpm run release:public-check`
 - 发布后单包只读 registry 预检（在父仓库）：
   `pnpm plugins:sync -- --pkg=@webcasa/deepseek-harness-marketplace --dry-run --no-assets`
+- 生产 guarded 单宿主切换（仅在父仓库提交部署并由发布操作员再次确认后）：
+  `pnpm plugins:sync -- --pkg=@webcasa/deepseek-harness-marketplace --replace-package=@webcasa/web --expected-replacement-slug=webcasa-web --expected-version=0.1.1 --expected-integrity=sha512-nlgpAdjkDdMe21zbFa9XSI1Nq68uwl4c4ulldOhhhygoEP1zBfdWSMl8P9qAO71K2w7DFXtyeAFC1WTTySp9yA== --expected-tarball=https://registry.npmjs.org/@webcasa/deepseek-harness-marketplace/-/deepseek-harness-marketplace-0.1.1.tgz --category=dev-assistant --no-assets`
 - Desktop 生产只读 smoke（在 Desktop 仓库）：`pnpm verify:cordis-preset && pnpm verify:cordis-market`
 - CI 工作流静态校验：`actionlint .github/workflows/ci.yml .github/workflows/publish.yml`
 
