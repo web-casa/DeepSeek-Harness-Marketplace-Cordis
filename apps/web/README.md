@@ -66,9 +66,9 @@ Trusted Publishing is selected for releases after the first bootstrap.
 `.github/workflows/publish.yml` validates that exact repository before it
 publishes with GitHub OIDC. It runs only from `main`; protect that branch and
 its `npm` environment before enabling the workflow. Validation, dependency
-installation, build, pack and DSH E2E run without an OIDC token; a separate
-job downloads the SHA-512-verified tarball and is the only job allowed to
-exchange an OIDC token for publication.
+installation, pinned DSH CLI provision, build, pack and DSH E2E run without an
+OIDC token; a separate job downloads the SHA-512-verified tarball and is the
+only job allowed to exchange an OIDC token for publication.
 
 npm requires a package to exist before a Trusted Publisher can be configured,
 so the initial `0.1.0` release needs the separately owner-approved

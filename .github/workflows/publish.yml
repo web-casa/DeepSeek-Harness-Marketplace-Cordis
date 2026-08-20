@@ -47,6 +47,10 @@ jobs:
           node-version: 24.18.0
       - name: Install workspace
         run: pnpm install --frozen-lockfile
+      - name: Install pinned DSH CLI
+        run: npm install --global --ignore-scripts @deepseek-ai/dsh@0.1.0-rc.7
+      - name: Record DSH CLI version
+        run: dsh --version
       - name: Test workspace
         run: pnpm -r test
       - name: Build Web plugin

@@ -44,7 +44,7 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
-- 199 tests / 199 pass（2026-08-20 `0.1.1` 候选的最新完整本地门禁；其中
+- 200 tests / 200 pass（2026-08-20 `0.1.1` 候选的最新完整本地门禁；其中
   journal-core POSIX FULL 96/96）。
 - 真实 DSH E2E PASS：install → patch disable → activate → restart → dsh-market
   路由 200。
@@ -94,6 +94,8 @@
   smoke 与真实 DSH smoke/E2E；Node 24.18.0、pnpm 11.10.0、DSH 0.1.0-rc.7 和
   Actions 提交均固定。CI 的 DSH integration 只使用临时 profile 与本地 fixture，
   不把生产 API 当作可用依赖。
+- Trusted Publishing 的 validate job 现在也会先安装并记录同一固定 DSH CLI，才运行 DSH
+  smoke/E2E；静态工作流回归测试锁定该顺序，避免干净 GitHub runner 因缺少 `dsh` 命令而失败。
 - 父仓库的 PostgreSQL live-server smoke 现 seed 两个严格 registry fixture，以和 Docker 一致的
   `next start` 生产构建启动；v4 列表 cursor、ETag/304、web/desktop 筛选、
   `quarantined` kill switch、详情、JSON 404 与静态 chunk 都是硬门禁。启动未就绪立即失败；既有
@@ -120,7 +122,7 @@
   remote；`publish.yml` 只允许 `main`，先在无 OIDC token 的 job 重跑 workspace/pack/host/DSH E2E，再由唯一
   `id-token: write` job 下载 SHA-512 复核后的 tarball 发布。待 GitHub `npm` environment 的人类审批者确认并
   完成 `npm trust github` 后，`0.1.1` 才能通过该受保护的 Trusted Publishing 工作流发布。
-- 166/166 是本轮全项目复审前的历史本地门禁记录。复审后的最新门禁为 199/199 workspace tests
+- 166/166 是本轮全项目复审前的历史本地门禁记录。复审后的最新门禁为 200/200 workspace tests
   （其中 journal-core POSIX FULL 96/96）、`pack:check`、`release:public-check`、host/DSH smoke、
   fixture 正向 install → pending → explicit activate → restart E2E、生产目录 self-refusal、
   actionlint、production dependency audit 与 `git diff --check`。其生成 tarball 的 script-free
