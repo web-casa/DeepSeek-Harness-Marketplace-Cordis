@@ -54,6 +54,9 @@
   Knip、production build、diff check，以及 preview 200/404 和 390px 六版无横向溢出的 HTTP/视觉验收。
   父仓库 `abb97c9` 已推送并由 Zeabur 部署为 RUNNING；生产 `cordis.run` 的 zh/en 落地页均以 HTTP 200
   输出 V5 `CATALOG / INSIDE THE HARNESS` 标记和准确 npm 链接，非 Cordis 域及未启用 preview 均为 404。
+- **顶栏命名（市场插件）**：Cordis 的 `navigation.main.marketplace` 已改为中文“市场插件”、英文
+  “Marketplace plugins”。此改动只影响导航入口，不改变落地页的“市场宿主”技术说明、公开发现边界或
+  安装/activate/uninstall 的受控模型；新增 locale 文案测试锁定两个名称。
 - **市场宿主公开产品面（已上线）**：父仓库已实现 Cordis 专属
   `/marketplace` 落地页、首页介绍区、导航/robots/sitemap、以及自包含的品牌 SVG；公开页只链接
   目录、指南和 npm，不创建 `/cordis-mp/install`、activate 或 uninstall mutation 通道。对应组件测试、
