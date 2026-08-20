@@ -44,7 +44,7 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
-- 201 tests / 201 pass（2026-08-20 `0.1.1` 候选的最新完整本地门禁；其中
+- 202 tests / 202 pass（2026-08-20 `0.1.1` 候选的最新完整本地门禁；其中
   journal-core 97/97，原 POSIX FULL 96-test gate 保持不变）。
 - 真实 DSH E2E PASS：install → patch disable → activate → restart → dsh-market
   路由 200。
@@ -96,6 +96,9 @@
   不把生产 API 当作可用依赖。
 - Trusted Publishing 的 validate job 现在也会先安装并记录同一固定 DSH CLI，才运行 DSH
   smoke/E2E；静态工作流回归测试锁定该顺序，避免干净 GitHub runner 因缺少 `dsh` 命令而失败。
+- `actions/checkout` 与 `actions/setup-node` 已升级并以提交固定至 Node 24-compatible 的 v5，消除
+  GitHub Actions 对其 Node 20 runtime 的弃用告警；同一静态回归测试锁住 publish workflow 的两处
+  `setup-node` 和 checkout pin。
 - 父仓库的 PostgreSQL live-server smoke 现 seed 两个严格 registry fixture，以和 Docker 一致的
   `next start` 生产构建启动；v4 列表 cursor、ETag/304、web/desktop 筛选、
   `quarantined` kill switch、详情、JSON 404 与静态 chunk 都是硬门禁。启动未就绪立即失败；既有

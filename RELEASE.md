@@ -194,13 +194,16 @@ unpublished `0.1.1` patch candidate.
   inspection refuses a foreign bundle that would pre-disable its `cordis-mp` entry id.
 
 ### Validation
-- 201/201 workspace tests (including journal-core 97/97 with its original POSIX FULL 96-test
+- 202/202 workspace tests (including journal-core 97/97 with its original POSIX FULL 96-test
   gate intact), host smoke, DSH smoke,
   fixture DSH install/pending/explicit-activate/restart E2E, pack/public-candidate gates,
   actionlint, and production dependency audit passed.
 - GitHub Actions [CI run 32325664197](https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis/actions/runs/32325664197)
   passed its Ubuntu host/DSH jobs and the first native Windows journal/Web smoke. Windows remains
   BEST_EFFORT.
+- CI and the publish workflow pin `actions/checkout` and `actions/setup-node` to their Node
+  24-compatible v5 commits, so the earlier Node 20 action-runtime deprecation annotation does not
+  apply to future runs.
 - A production self-refusal request returns `409 SELF_INSTALL_FORBIDDEN`; this is a safety
   acceptance check, not a positive production plugin lifecycle E2E.
 
