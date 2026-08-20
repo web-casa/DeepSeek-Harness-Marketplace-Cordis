@@ -68,10 +68,11 @@ gate.
   adds and passes the matching explicitly opted-in Tauri bootstrap-IPC E2E,
   including stale revision rejection before mutation and the same pending/
   activate/restart assertions. It does not exercise or alter a Store build.
-- The latest pushed CI evidence, [run 32331107816](https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis/actions/runs/32331107816),
-  passed its Ubuntu, DSH lifecycle, and native Windows BEST_EFFORT jobs. This
-  record is marketplace CI evidence; the new Desktop E2E remains an explicit
-  manual production check and is intentionally not a production-network CI dependency.
+- Marketplace CI [run 32347079076](https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis/actions/runs/32347079076)
+  passed its Ubuntu test/build/host-smoke, DSH lifecycle, and native Windows
+  BEST_EFFORT jobs. This record is marketplace CI evidence; the new Desktop E2E
+  remains an explicit manual production check and is intentionally not a
+  production-network CI dependency.
 - `actionlint .github/workflows/ci.yml .github/workflows/publish.yml`,
   `pnpm audit --prod --audit-level=high`, Node syntax checks, and
   `git diff --check`: pass. The supplementary generic style checker has no
