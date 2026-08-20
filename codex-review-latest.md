@@ -50,6 +50,9 @@ interactive owner verification before a later OIDC release.
   before mutation, as required.
 - Desktop's read-only `verify:cordis-preset` and `verify:cordis-market` probes
   pass, including `webcasa-web` nested-source wire validation.
+- The latest pushed CI evidence, [run 32331107816](https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis/actions/runs/32331107816),
+  passed its Ubuntu, DSH lifecycle, and native Windows BEST_EFFORT jobs. This
+  local commit has not been pushed, so it has not claimed a remote CI run.
 - `actionlint .github/workflows/ci.yml .github/workflows/publish.yml`,
   `pnpm audit --prod --audit-level=high`, Node syntax checks, the review style
   checker, and `git diff --check`: pass.

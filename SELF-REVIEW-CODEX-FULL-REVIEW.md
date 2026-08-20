@@ -55,4 +55,6 @@
 - The historical direct-bootstrap candidate was published with interactive 2FA, then passed guarded
   production cutover. No release tag was created, and Trusted Publishing still needs `npm trust github`
   configuration and verification for a later version.
-- Windows 仍为 BEST_EFFORT；首个 GitHub Actions Windows green run 前不将其表述为已实证。
+- Windows 仍为 BEST_EFFORT；但已由 GitHub Actions 的 Windows 原生作业实证（[CI run
+  32331107816](https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis/actions/runs/32331107816)），
+  该结果不改变 POSIX FULL 的边界。
