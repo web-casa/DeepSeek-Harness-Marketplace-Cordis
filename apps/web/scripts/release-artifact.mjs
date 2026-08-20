@@ -7,6 +7,8 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 export const RELEASE_DSH_ENGINE = '>=0.1.0-rc.7 <0.2.0'
+export const PUBLIC_RELEASE_PACKAGE_NAME = '@webcasa/deepseek-harness-marketplace'
+export const PUBLIC_RELEASE_ARTIFACT_NAME = 'webcasa-deepseek-harness-marketplace-release-candidate.tgz'
 export const PUBLIC_RELEASE_LICENSE_FILE = 'LICENSE'
 export const MAX_PUBLIC_RELEASE_LICENSE_BYTES = 128 * 1024
 export const RELEASE_ARTIFACT_FILES = Object.freeze([
@@ -38,6 +40,13 @@ function publicLicenseDeclarationProblem(source) {
   }
   if (source.license.trim().toUpperCase() === 'UNLICENSED') {
     return 'public release must not declare license UNLICENSED'
+  }
+  return null
+}
+
+function publicPackageIdentityProblem(source) {
+  if (source.name !== PUBLIC_RELEASE_PACKAGE_NAME) {
+    return `public release package name must be ${JSON.stringify(PUBLIC_RELEASE_PACKAGE_NAME)}`
   }
   return null
 }
@@ -91,7 +100,7 @@ export function releaseManifestProblem(source) {
 
 /** Return a human-readable public-release manifest problem, or null when legal metadata is explicit. */
 export function publicReleaseManifestProblem(source) {
-  return releaseManifestProblem(source) || publicLicenseDeclarationProblem(source)
+  return releaseManifestProblem(source) || publicPackageIdentityProblem(source) || publicLicenseDeclarationProblem(source)
 }
 
 /** Return a human-readable public-release artifact problem, or null when it is safe to create. */
@@ -159,7 +168,7 @@ export function createReleaseArtifact(appDir, { publicRelease = false } = {}) {
     copyFileSync(join(appDir, PUBLIC_RELEASE_LICENSE_FILE), join(packageDir, PUBLIC_RELEASE_LICENSE_FILE))
   }
 
-  const out = join(pack, 'webcasa-web-release-candidate.tgz')
+  const out = join(pack, PUBLIC_RELEASE_ARTIFACT_NAME)
   execFileSync('tar', ['-czf', out, '-C', pack, 'package'])
   return out
 }

@@ -67,12 +67,15 @@
   bootstrap 公开发布为 `latest`，随后通过父仓库的 strict registry-only preflight，并以
   `dev-assistant` 分类同步到生产目录。对 `https://cordis.run/api/v1` 的只读契约 probe 已验证
   web/desktop 筛选、ETag/304、详情与 JSON 404，严格目录 `count=1`。
+- 发布 identity 已更正：未发布候选、DSH patch 和 host 自安装身份现在是
+  `@webcasa/deepseek-harness-marketplace@0.1.1`。旧 `@webcasa/web@0.1.0` 仍是不可改写的
+  历史 npm/生产目录记录，不能被表述为新候选或与新候选并列为两个可安装市场宿主。
 - 生产 DSH 验收的结论必须区分：`0.1.0` 的真实目标试运行完成 inspect → pre-disable → install →
   verify → pending，但因目标正是市场宿主自身，pre-disable 禁用了其 `/cordis-mp/activate` 路由，
   activate 收到 405；这不是可接受的正向 E2E。修复后的 `0.1.1` 本地候选会在任何 inspect/journal/
   pre-disable/package mutation 前拒绝同 npm 包名，并在 inspect 后拒绝任何宣称宿主 `cordis-mp`
   entry id 的外部 bundle；使用真实生产目录的 self-refusal E2E 已验证 409 且 profile 未被禁用。
-  `0.1.1` 尚未发布，完整正向生产 DSH E2E 仍需要一个独立、严格合规的公开插件条目。
+  新 identity 的 `0.1.1` 尚未发布，完整正向生产 DSH E2E 仍需要一个独立、严格合规的公开插件条目。
 - fixture 已对齐 cursor + `count/page`、`page/per_page` 兼容、ETag/304、JSON
   error、canonical screenshot；`scripts/cordis-run-contract-probe.mjs` 可在
   部署后做无 mutation 的目标验收，DSH E2E 也可显式通过 `CORDIS_RUN_API` 切换。
@@ -112,16 +115,16 @@
   Windows 仍保持 BEST_EFFORT，绝不因此宣称 FULL。
 - pnpm 仅显式批准 `esbuild` 的构建脚本（`allowBuilds.esbuild: true`）；这是 Web
   打包所需的已声明 devDependency，其余依赖仍不获隐式构建脚本授权。
-- 独立候选打包已实现并完成本地验证：`@webcasa/web` 的私有源码 manifest 明确声明
+- 独立候选打包已实现并完成本地验证：`@webcasa/deepseek-harness-marketplace` 的私有源码 manifest 明确声明
   `dsh.platforms: [web, desktop]` 与 `dsh.engines.dsh: >=0.1.0-rc.7 <0.2.0`；
   `pack-smoke` 生成无 workspace 依赖、可公开打包的独立候选，且保留 `dist/`，从而修复 host
   的 `../data/registry-snapshot.json` 离线 fallback 路径。新增测试会实际解包、强制网络失败并
   验证该 snapshot fallback；真实 DSH E2E 仍通过。`pnpm run pack:check` 现同时对各 workspace
   和该临时候选执行无脚本 `npm pack --dry-run`。源码 workspace 依旧 `private: true`，不会直接 npm
-  发布、tag 或变更可见性，也不会把本地 pack integrity 当作 registry integrity；生成的 `0.1.0`
-  候选则已按下述记录公开发布。owner 已确认公开
-  `@webcasa/web@0.1.0`、`latest`、`dev-assistant` 分类，以及 MIT
-  `Copyright (c) 2026 www.Web.Casa`；私有源码 manifest 现声明 `MIT`，且公开候选显式包含 `LICENSE`。
+  发布、tag 或变更可见性，也不会把本地 pack integrity 当作 registry integrity。旧
+  `@webcasa/web@0.1.0` 的 direct bootstrap 是历史事实；新 identity 的 `0.1.1` 尚未公开。
+  owner 已确认 MIT `Copyright (c) 2026 www.Web.Casa`；私有源码 manifest 现声明 `MIT`，且公开候选
+  显式包含 `LICENSE`。
   `pnpm run release:public-check` 是 opt-in 本地门禁：完成 build 后会生成候选并复核 archive 与 npm
   无脚本、离线 dry-run 文件清单，不触发 npm/GitHub/数据库/部署 mutation。`0.1.0` 已完成 direct
   interactive/2FA bootstrap（不是 OIDC provenance）。实际本地 `origin` 已指向 owner 确认的 GitHub
@@ -129,7 +132,9 @@
   `id-token: write` job 下载 SHA-512 复核后的 tarball 发布。GitHub `npm` environment 已设为 custom
   branch policy `main`，并要求 `yeagoo` 人工批准；为避免未提供第二审批者时的死锁，当前允许自审，且 GitHub
   仍报告 admin 可 bypass，因此这不是独立双人审批。npm 11.17.0 已确认精确 trust 参数，但创建/列出
-  `npm trust github` 与 `npm trust list` 均要求 owner 完成互动式 2FA；该关系尚未能完成/验证，`0.1.1` 仍不会发布。
+  `npm trust github` 与 `npm trust list` 均要求 owner 完成互动式 2FA。更名后的新 npm 包尚不存在，npm
+  不允许预先配置其 trusted publisher，因此 `0.1.1` 必须先经 owner 明确批准的 direct interactive/2FA
+  bootstrap；之后才能为后续版本建立/复核 OIDC trust。
 - 166/166 是本轮全项目复审前的历史本地门禁记录。复审后的最新门禁为 203/203 workspace tests
   （其中 journal-core 97/97，原 POSIX FULL 96-test gate 保持不变）、`pack:check`、
   `release:public-check`、host/DSH smoke、
@@ -156,14 +161,15 @@
 
 ## 未完成事项
 1. `@webcasa/web@0.1.0` 的 direct bootstrap、strict preflight、`dev-assistant` 同步、生产 `count=1`
-   与 API 契约 probe 均已完成；它没有 OIDC provenance。包含宿主自安装/entry-id 冲突保护、全项目复审、
-   settings 落地页、发布 workflow 和 Windows fsync 修复的 `0.1.1` 未发布候选已推送至 `main`；
-   GitHub `npm` environment 现已 main-only 并要求 `yeagoo` 批准；npm CLI 对建立/列出 trusted publisher
-   强制互动式 2FA，故 exact `npm trust github` 关系尚未完成或验证，workflow 也尚未 dispatch。完成 owner
-   认证后才可从该审批 workflow 发布。父仓库的
+   与 API 契约 probe 均已完成；它没有 OIDC provenance，且只是旧 identity 的历史记录。包含宿主自安装/
+   entry-id 冲突保护、全项目复审、settings 落地页、发布 workflow 和 Windows fsync 修复的
+   `@webcasa/deepseek-harness-marketplace@0.1.1` 未发布候选等待 owner 批准发布。新 npm 包尚不存在，不能先配置
+   `npm trust github`；owner 必须明确批准其 direct interactive/2FA bootstrap。发布后才以 exact 新包名
+   做 strict preflight、`dev-assistant` 同步并建立/复核 OIDC trust；旧 catalog entry 的 cutover 必须避免
+   留下两个可安装 market-host。父仓库的
    Apache-2.0 文件没有被复制或套用。
 2. `0.1.1` 发布后必须重跑父仓库只读预检
-   `pnpm plugins:sync -- --pkg=@webcasa/web --dry-run --no-assets`，并只在 exact latest artifact ready 后
+   `pnpm plugins:sync -- --pkg=@webcasa/deepseek-harness-marketplace --dry-run --no-assets`，并只在 exact latest artifact ready 后
    以已确认的 `dev-assistant` 分类同步。不得从包名、README 或 `bundle.patch` 反推 version/sha512/tarball。
 3. 取得独立、严格合规的公开插件条目后，运行真实生产 DSH 的 install → pending → explicit activate →
    restart E2E；市场宿主自身必须继续拒绝，不能用自安装伪造正向验收。以已审核公开 slug 运行 Desktop 的
@@ -184,7 +190,7 @@
 - 公开发布候选本地门禁（MIT source/`LICENSE` 就绪后应为 `ready`）：
   `pnpm run release:public-check`
 - 发布后单包只读 registry 预检（在父仓库）：
-  `pnpm plugins:sync -- --pkg=@webcasa/web --dry-run --no-assets`
+  `pnpm plugins:sync -- --pkg=@webcasa/deepseek-harness-marketplace --dry-run --no-assets`
 - Desktop 生产只读 smoke（在 Desktop 仓库）：`pnpm verify:cordis-preset && pnpm verify:cordis-market`
 - CI 工作流静态校验：`actionlint .github/workflows/ci.yml .github/workflows/publish.yml`
 

@@ -2,6 +2,12 @@
 
 Date: 2026-08-20
 
+> Identity correction: the workflow review remains valid for its separated validation/OIDC boundary,
+> but its former `@webcasa/web@0.1.1` target has been superseded by the unpublished
+> `@webcasa/deepseek-harness-marketplace@0.1.1` identity. npm requires that new package to exist
+> before a Trusted Publisher can be attached, so its first owner-approved publication is a separate
+> direct interactive/2FA bootstrap; OIDC applies to a later version.
+
 ## Scope reviewed
 
 - Exact GitHub repository metadata and public/latest `@webcasa/web` candidate metadata.

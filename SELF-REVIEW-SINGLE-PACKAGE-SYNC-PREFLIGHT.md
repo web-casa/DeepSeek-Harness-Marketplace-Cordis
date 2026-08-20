@@ -1,5 +1,9 @@
 # Self-review — single-package registry preflight
 
+> Identity correction: all `@webcasa/web@0.1.0` execution results below are historical registry
+> evidence. The current unpublished target is `@webcasa/deepseek-harness-marketplace@0.1.1` and must
+> independently pass this same exact-package preflight before any owner-approved production sync.
+
 ## Scope
 
 - Parent repository `scripts/plugins/sync-npm.ts`

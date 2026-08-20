@@ -2,6 +2,11 @@
 
 Date: 2026-08-20
 
+> Historical record: this document describes the completed bootstrap into `@webcasa/web@0.1.0`.
+> The owner later selected `@webcasa/deepseek-harness-marketplace` for the current unpublished
+> candidate; this record must not be read as approval to publish the new identity or as a rewrite of
+> the immutable old registry artifact.
+
 ## Decision and evidence
 
 - The owner replaced the uncreatable organization scope `@cordis-mp` with the

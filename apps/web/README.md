@@ -1,4 +1,4 @@
-# @webcasa/web
+# @webcasa/deepseek-harness-marketplace
 
 Cordis marketplace plugin for DeepSeek Harness (DSH). The locally verified
 standalone candidate bundles the marketplace host and client, while keeping the plugin's
@@ -49,18 +49,20 @@ The tarball contains `dist/index.js`, `dist/client.js`, the root-level
 `data/registry-snapshot.json`, and the bundle patch. Keeping `dist/` intact is
 required for the host's offline snapshot fallback to resolve correctly.
 
-No npm publication is performed by these commands. The owner has approved the
-public `@webcasa/web@0.1.0` candidate, dist-tag `latest`, the `dev-assistant`
-Cordis category, and MIT with `Copyright (c) 2026 www.Web.Casa`. The workspace
-source deliberately remains private; only its generated, dependency-free
-candidate is publishable.
+No npm publication is performed by these commands. The intended public package
+is `@webcasa/deepseek-harness-marketplace@0.1.1`, with dist-tag `latest`, MIT,
+and `Copyright (c) 2026 www.Web.Casa`; it is not published yet. The earlier
+`@webcasa/web@0.1.0` publication is an immutable historical bootstrap and is
+not the identity of this candidate. The workspace source deliberately remains
+private; only its generated, dependency-free candidate is publishable.
 
 Before publishing, run `pnpm run release:public-check` from the repository
 root. It locally verifies the declaration, bounded regular `LICENSE` file,
 generated candidate, and npm's script-free offline dry-run file list; it does
 not publish or contact a registry.
 
-Trusted Publishing is selected for releases after the first bootstrap.
+Trusted Publishing is selected for releases after the first bootstrap of this
+new npm package identity.
 `repository.url` is pinned to
 `web-casa/DeepSeek-Harness-Marketplace-Cordis`, and the checked-in manual-only
 `.github/workflows/publish.yml` validates that exact repository before it
@@ -70,11 +72,11 @@ installation, pinned DSH CLI provision, build, pack and DSH E2E run without an
 OIDC token; a separate job downloads the SHA-512-verified tarball and is the
 only job allowed to exchange an OIDC token for publication.
 
-npm requires a package to exist before a Trusted Publisher can be configured,
-so the initial `0.1.0` release needs the separately owner-approved
-interactive/2FA bootstrap. After that release exists, configure its publisher
-with the exact remote and workflow filename, then use the protected workflow
-for later versions. Once npm has published the candidate, run the parent
-repository's registry sync so cordis.run can capture the registry's exact
-tarball URL and SHA-512 integrity; hand-written catalog source data is not
-accepted.
+npm requires a package to exist before a Trusted Publisher can be configured.
+Therefore `@webcasa/deepseek-harness-marketplace@0.1.1` needs a separately
+owner-approved interactive/2FA bootstrap before any OIDC-based later release.
+After that release exists, configure its publisher with the exact remote and
+workflow filename, then use the protected workflow. Once npm has published the
+candidate, run the parent repository's registry sync so cordis.run can capture
+the registry's exact tarball URL and SHA-512 integrity; hand-written catalog
+source data is not accepted.

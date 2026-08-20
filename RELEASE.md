@@ -2,16 +2,20 @@
 
 ## Current release candidate
 
-- Version: `0.1.1` (root, six core workspaces, and `@webcasa/web` are aligned).
+- Version: `0.1.1` (root, six core workspaces, and
+  `@webcasa/deepseek-harness-marketplace` are aligned).
 - Status: an unpublished, locally validated patch candidate contains the marketplace-host self-install
   and host-entry conflict protection. `@webcasa/web@0.1.0` was already published
   public with dist-tag `latest` by the approved direct interactive/2FA bootstrap;
-  it is immutable and has no OIDC provenance. The `0.1.1` candidate has passed its
+  it is immutable and has no OIDC provenance. The newly named
+  `@webcasa/deepseek-harness-marketplace@0.1.1` candidate has passed its
   latest post-review local gate (203/203 workspace tests, including journal-core 97/97 with
-  its original POSIX FULL 96-test gate intact) and is now on `main`; it must be released through the
-  Trusted Publishing workflow after the npm registry's interactive 2FA trust configuration completes.
+  its original POSIX FULL 96-test gate intact). npm requires a package to exist before it can attach
+  a Trusted Publisher, so this new package needs a separately owner-approved direct interactive/2FA
+  bootstrap; do not dispatch the OIDC workflow for this first publication.
 - Package policy: every source workspace remains `private: true`. The only
-  intended public package is the generated, dependency-free `@webcasa/web`
+  intended public package is the generated, dependency-free
+  `@webcasa/deepseek-harness-marketplace`
   candidate at `0.1.1`, using dist-tag `latest`.
 - Scope decision: the direct bootstrap reached npm's authenticated write path,
   where npm rejected the unowned `@cordis-mp` organization scope before any
@@ -21,17 +25,17 @@
   www.Web.Casa`. `apps/web/package.json` declares `MIT` and its checked-in
   `LICENSE` is explicitly bundled into the public candidate. This is a packaging
   record, not independent legal advice.
-- Trusted Publishing is selected for `0.1.1` and later releases. The candidate pins
+- Trusted Publishing is selected after the new package's bootstrap. The candidate pins
   `repository.url` to `web-casa/DeepSeek-Harness-Marketplace-Cordis`, and the
   manual-only `.github/workflows/publish.yml` has the required OIDC permission
   and exact-repository check. npm requires a package to exist before its trusted
-  publisher can be configured. The `0.1.0` bootstrap is complete, but it does not
-  have OIDC provenance; the GitHub `npm` environment is now main-only with a manual owner approval
-  rule, while npm interactive 2FA still blocks configuration and verification of the publisher.
+  publisher can be configured. The old `@webcasa/web@0.1.0` bootstrap is complete, but it does not
+  apply to the newly named package. The GitHub `npm` environment is main-only with a manual owner
+  approval rule, ready for a later OIDC release after the new package exists and its publisher is configured.
 
 ## Artifact boundary
 
-`@webcasa/web` is the DSH plugin deliverable. Its normal workspace manifest deliberately
+`@webcasa/deepseek-harness-marketplace` is the intended DSH plugin deliverable. Its normal workspace manifest deliberately
 remains private and contains `workspace:*` dependencies. The self-contained DSH packer turns
 it into a separate candidate manifest with no workspace dependencies, `private: false`,
 `dist/index.js`/`dist/client.js`, `data/registry-snapshot.json`, and the declared DSH
@@ -84,8 +88,10 @@ the legal choice and validity of its license expression.
 
 ## Configure Trusted Publishing after the bootstrap
 
-`@webcasa/web@0.1.0` now exists on npm and the reviewed `publish.yml`
-has been pushed to the exact GitHub repository:
+`@webcasa/web@0.1.0` is an immutable historical package. The new
+`@webcasa/deepseek-harness-marketplace@0.1.1` identity does not yet exist on npm,
+so its first publication cannot use npm Trusted Publishing. After the owner-approved
+interactive bootstrap has completed, use the reviewed `publish.yml` for later releases:
 
 1. The GitHub `npm` environment is configured with an exact `main` deployment branch policy and
    `yeagoo` as the required reviewer. It permits self-review because no independent reviewer was
@@ -94,16 +100,16 @@ has been pushed to the exact GitHub repository:
 2. With the owning npm account and 2FA, configure the one allowed publisher:
 
    ```bash
-   npm trust github @webcasa/web \
+   npm trust github @webcasa/deepseek-harness-marketplace \
      --repo web-casa/DeepSeek-Harness-Marketplace-Cordis \
      --file publish.yml \
      --env npm \
      --allow-publish
    ```
 
-3. Verify the recorded relationship with `npm trust list @webcasa/web`, then
+3. Verify the recorded relationship with `npm trust list @webcasa/deepseek-harness-marketplace`, then
    manually dispatch `publish.yml` only from a reviewed `main` commit with
-   expected release `@webcasa/web@0.1.1`. The
+   expected release `@webcasa/deepseek-harness-marketplace@<next-version>`. The
    token-free validation job reruns workspace tests, pack validation, host
    smoke, DSH smoke, staged-install E2E, and public-candidate validation. The
    OIDC-only job then downloads the SHA-512-verified tarball without checkout
@@ -121,7 +127,7 @@ the approved package, use the parent repository's read-only registry preflight b
 database synchronization:
 
 ```bash
-pnpm plugins:sync -- --pkg=@webcasa/web --dry-run --no-assets
+pnpm plugins:sync -- --pkg=@webcasa/deepseek-harness-marketplace --dry-run --no-assets
 ```
 
 It fetches the npm packument only and exits nonzero unless the requested name, exact latest
@@ -134,7 +140,7 @@ The owner must then choose an already configured Cordis category.  Only the expl
 command accepts that category, and it honors `--no-assets`:
 
 ```bash
-pnpm plugins:sync -- --pkg=@webcasa/web \
+pnpm plugins:sync -- --pkg=@webcasa/deepseek-harness-marketplace \
   --category=<owner-approved-cordis-category> --no-assets
 ```
 
@@ -149,9 +155,9 @@ approved all of the following:
 
 1. Public package set and dependency publication order. For the current release
    design, the only intended public package is the generated self-contained
-   `@webcasa/web` candidate: it has no workspace dependencies, while every
-   source workspace stays private. A package rename or additional public package
-   is a separate migration and review.
+   `@webcasa/deepseek-harness-marketplace` candidate: it has no workspace dependencies,
+   while every source workspace stays private. The old `@webcasa/web@0.1.0` registry
+   artifact remains historical and must not be overwritten or represented as this candidate.
 2. Candidate README, license file and declaration, ownership/access, npm
    maintainers, provenance, and registry policy.
 3. A release version if it is not `0.1.1`; update all aligned manifests intentionally and rerun
@@ -214,9 +220,12 @@ unpublished `0.1.1` patch candidate.
   acceptance check, not a positive production plugin lifecycle E2E.
 
 ### Known boundary
-- `@webcasa/web@0.1.0` is public, strictly synchronized, and produces production API `count=1`.
+- `@webcasa/web@0.1.0` is public, strictly synchronized, and produces production API `count=1` as a
+  historical catalog entry. The new `@webcasa/deepseek-harness-marketplace@0.1.1` identity is not
+  published or synchronized yet; a cutover must not leave two installable market-host entries.
   The original target was the market host itself, so it is not valid evidence for a positive
   production DSH lifecycle E2E. A separate strict public plugin remains required for that E2E.
 - Desktop v4 has a passing production structural smoke; an actual Desktop install E2E and the
-  `0.1.1` Trusted Publishing release remain pending.
+  owner-approved `0.1.1` bootstrap are pending. Trusted Publishing begins only after that new
+  package identity exists on npm.
 ```

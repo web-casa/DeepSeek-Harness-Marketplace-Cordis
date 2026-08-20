@@ -8,7 +8,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   createPublicReleaseArtifact,
   MAX_PUBLIC_RELEASE_LICENSE_BYTES,
+  PUBLIC_RELEASE_ARTIFACT_NAME,
   PUBLIC_RELEASE_ARTIFACT_FILES,
+  PUBLIC_RELEASE_PACKAGE_NAME,
   RELEASE_ARTIFACT_FILES,
   RELEASE_DSH_ENGINE,
   publicReleaseArtifactProblem,
@@ -44,8 +46,8 @@ test('release candidate packer fails closed when private source metadata loses a
 
 test('public release gate validates the owner-approved source and still rejects missing legal metadata', () => {
   const sourceManifest = JSON.parse(readFileSync(join(app, '..', 'package.json'), 'utf8'))
-  assert.equal(sourceManifest.name, '@webcasa/web')
-  assert.equal(readFileSync(join(app, '..', 'cordis.patch.yml'), 'utf8'), "- insert:\n    - id: cordis-mp\n      name: '@webcasa/web'\n")
+  assert.equal(sourceManifest.name, PUBLIC_RELEASE_PACKAGE_NAME)
+  assert.equal(readFileSync(join(app, '..', 'cordis.patch.yml'), 'utf8'), `- insert:\n    - id: cordis-mp\n      name: '${PUBLIC_RELEASE_PACKAGE_NAME}'\n`)
   assert.equal(releaseManifestProblem(sourceManifest), null)
   assert.equal(publicReleaseManifestProblem(sourceManifest), null)
   assert.equal(publicReleaseArtifactProblem(join(app, '..'), sourceManifest), null)
@@ -58,6 +60,10 @@ test('public release gate validates the owner-approved source and still rejects 
   const unlicensed = structuredClone(sourceManifest)
   unlicensed.license = 'UNLICENSED'
   assert.match(publicReleaseManifestProblem(unlicensed) ?? '', /must not declare license UNLICENSED/)
+
+  const legacyPackageName = structuredClone(sourceManifest)
+  legacyPackageName.name = '@webcasa/web'
+  assert.match(publicReleaseManifestProblem(legacyPackageName) ?? '', /public release package name must be/)
 
   const artifactless = mkdtempSync(join(tmpdir(), 'cordis-public-release-artifactless-'))
   try {
@@ -131,9 +137,9 @@ test('public release check emits a GitHub Actions artifact output only after val
     assert.equal(result.status, 0, result.stderr)
     const ready = JSON.parse(result.stdout)
     assert.equal(ready.status, 'ready')
-    assert.equal(ready.package, '@webcasa/web@0.1.1')
+    assert.equal(ready.package, `${PUBLIC_RELEASE_PACKAGE_NAME}@0.1.1`)
     artifactDir = dirname(ready.artifact)
-    assert.equal(basename(ready.artifact), 'webcasa-web-release-candidate.tgz')
+    assert.equal(basename(ready.artifact), PUBLIC_RELEASE_ARTIFACT_NAME)
     assert.ok(artifactDir.startsWith(join(tmpdir(), 'cordis-web-pack-')))
     const manifest = JSON.parse(execFileSync('tar', ['-xOzf', ready.artifact, 'package/package.json'], { encoding: 'utf8' }))
     assert.deepEqual(manifest.repository, {

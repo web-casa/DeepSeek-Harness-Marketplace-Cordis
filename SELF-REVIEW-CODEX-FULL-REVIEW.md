@@ -4,6 +4,11 @@
 范围：`cordis-mp` 的受版本控制 packages、`apps/web`、脚本、CI 与发布边界。未修改
 `journal-core` 的 POSIX FULL 语义或实现。
 
+> Identity correction: this review's `@webcasa/web@0.1.1` candidate output is historical evidence
+> from before the owner changed the intended public identity. The current unpublished candidate is
+> `@webcasa/deepseek-harness-marketplace@0.1.1`; old-package production probes remain historical
+> and are not evidence that the new package is published.
+
 ## 已修复的结论
 
 1. **目录不能用陈旧数据授权 mutation。** 安装与 Activate 都要求 fresh detail、非空且匹配的

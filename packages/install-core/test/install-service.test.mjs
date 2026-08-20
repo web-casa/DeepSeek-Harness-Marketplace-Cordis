@@ -215,7 +215,7 @@ test('a foreign bundle cannot pre-disable the marketplace host entry and its sta
     inspect,
     pendingPath: c.pendingPath,
     lock: c.lock,
-    selfPackageName: '@webcasa/web',
+    selfPackageName: '@webcasa/deepseek-harness-marketplace',
     selfEntryIds: ['cordis-mp'],
   })
 
