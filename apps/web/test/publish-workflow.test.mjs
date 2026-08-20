@@ -33,3 +33,17 @@ test('publish workflow uses the Node 24-compatible pinned GitHub Actions runtime
   assert.ok(!workflow.includes('actions/checkout@11d5960a326750d5838078e36cf38b85af677262'), 'Node 20 checkout pin must not return')
   assert.ok(!workflow.includes('actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020'), 'Node 20 setup-node pin must not return')
 })
+
+test('publish job remains behind the npm environment and OIDC identity gate', () => {
+  const workflow = readFileSync(workflowPath, 'utf8')
+  const publish = workflow.slice(workflow.indexOf('\n  publish:'))
+
+  assert.match(publish, /^    environment: npm$/m, 'public publication must require the npm deployment environment')
+  assert.match(publish, /^      id-token: write$/m, 'public publication must use OIDC instead of an npm token')
+  assert.match(publish, /^        run: npm publish .* --provenance --ignore-scripts$/m, 'publication must retain provenance and disable scripts')
+  assert.doesNotMatch(
+    publish,
+    /^\s*(?:NODE_AUTH_TOKEN|NPM_TOKEN):/m,
+    'publish job must not accept a long-lived npm token',
+  )
+})

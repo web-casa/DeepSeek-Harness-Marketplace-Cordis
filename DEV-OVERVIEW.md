@@ -44,7 +44,7 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
-- 202 tests / 202 pass（2026-08-20 `0.1.1` 候选的最新完整本地门禁；其中
+- 203 tests / 203 pass（2026-08-20 `0.1.1` 候选的最新完整本地门禁；其中
   journal-core 97/97，原 POSIX FULL 96-test gate 保持不变）。
 - 真实 DSH E2E PASS：install → patch disable → activate → restart → dsh-market
   路由 200。
@@ -126,9 +126,11 @@
   无脚本、离线 dry-run 文件清单，不触发 npm/GitHub/数据库/部署 mutation。`0.1.0` 已完成 direct
   interactive/2FA bootstrap（不是 OIDC provenance）。实际本地 `origin` 已指向 owner 确认的 GitHub
   remote；`publish.yml` 只允许 `main`，先在无 OIDC token 的 job 重跑 workspace/pack/host/DSH E2E，再由唯一
-  `id-token: write` job 下载 SHA-512 复核后的 tarball 发布。待 GitHub `npm` environment 的人类审批者确认并
-  完成 `npm trust github` 后，`0.1.1` 才能通过该受保护的 Trusted Publishing 工作流发布。
-- 166/166 是本轮全项目复审前的历史本地门禁记录。复审后的最新门禁为 201/201 workspace tests
+  `id-token: write` job 下载 SHA-512 复核后的 tarball 发布。GitHub `npm` environment 已设为 custom
+  branch policy `main`，并要求 `yeagoo` 人工批准；为避免未提供第二审批者时的死锁，当前允许自审，且 GitHub
+  仍报告 admin 可 bypass，因此这不是独立双人审批。npm 11.17.0 已确认精确 trust 参数，但创建/列出
+  `npm trust github` 与 `npm trust list` 均要求 owner 完成互动式 2FA；该关系尚未能完成/验证，`0.1.1` 仍不会发布。
+- 166/166 是本轮全项目复审前的历史本地门禁记录。复审后的最新门禁为 203/203 workspace tests
   （其中 journal-core 97/97，原 POSIX FULL 96-test gate 保持不变）、`pack:check`、
   `release:public-check`、host/DSH smoke、
   fixture 正向 install → pending → explicit activate → restart E2E、生产目录 self-refusal、
@@ -156,8 +158,9 @@
 1. `@webcasa/web@0.1.0` 的 direct bootstrap、strict preflight、`dev-assistant` 同步、生产 `count=1`
    与 API 契约 probe 均已完成；它没有 OIDC provenance。包含宿主自安装/entry-id 冲突保护、全项目复审、
    settings 落地页、发布 workflow 和 Windows fsync 修复的 `0.1.1` 未发布候选已推送至 `main`；
-   随后仍需由 owner 指定 GitHub `npm` environment 的人类审批者，配置/复核 `npm trust github`，
-   再从受保护 workflow 发布。父仓库的
+   GitHub `npm` environment 现已 main-only 并要求 `yeagoo` 批准；npm CLI 对建立/列出 trusted publisher
+   强制互动式 2FA，故 exact `npm trust github` 关系尚未完成或验证，workflow 也尚未 dispatch。完成 owner
+   认证后才可从该审批 workflow 发布。父仓库的
    Apache-2.0 文件没有被复制或套用。
 2. `0.1.1` 发布后必须重跑父仓库只读预检
    `pnpm plugins:sync -- --pkg=@webcasa/web --dry-run --no-assets`，并只在 exact latest artifact ready 后

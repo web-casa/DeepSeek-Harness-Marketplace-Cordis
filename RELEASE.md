@@ -7,9 +7,9 @@
   and host-entry conflict protection. `@webcasa/web@0.1.0` was already published
   public with dist-tag `latest` by the approved direct interactive/2FA bootstrap;
   it is immutable and has no OIDC provenance. The `0.1.1` candidate has passed its
-  latest post-review local gate (201/201 workspace tests, including journal-core 97/97 with
+  latest post-review local gate (203/203 workspace tests, including journal-core 97/97 with
   its original POSIX FULL 96-test gate intact) and is now on `main`; it must be released through the
-  protected Trusted Publishing workflow after its human approvers are configured.
+  Trusted Publishing workflow after the npm registry's interactive 2FA trust configuration completes.
 - Package policy: every source workspace remains `private: true`. The only
   intended public package is the generated, dependency-free `@webcasa/web`
   candidate at `0.1.1`, using dist-tag `latest`.
@@ -26,7 +26,8 @@
   manual-only `.github/workflows/publish.yml` has the required OIDC permission
   and exact-repository check. npm requires a package to exist before its trusted
   publisher can be configured. The `0.1.0` bootstrap is complete, but it does not
-  have OIDC provenance; configure and verify the publisher before releasing `0.1.1`.
+  have OIDC provenance; the GitHub `npm` environment is now main-only with a manual owner approval
+  rule, while npm interactive 2FA still blocks configuration and verification of the publisher.
 
 ## Artifact boundary
 
@@ -86,8 +87,10 @@ the legal choice and validity of its license expression.
 `@webcasa/web@0.1.0` now exists on npm and the reviewed `publish.yml`
 has been pushed to the exact GitHub repository:
 
-1. Create the GitHub `npm` environment and require the intended release
-   approvers. Keep the repository public if npm provenance is required.
+1. The GitHub `npm` environment is configured with an exact `main` deployment branch policy and
+   `yeagoo` as the required reviewer. It permits self-review because no independent reviewer was
+   specified, and GitHub reports that administrators may bypass it; this is a manual owner checkpoint,
+   not independent separation of duties. Keep the repository public if npm provenance is required.
 2. With the owning npm account and 2FA, configure the one allowed publisher:
 
    ```bash
@@ -106,8 +109,10 @@ has been pushed to the exact GitHub repository:
    OIDC-only job then downloads the SHA-512-verified tarball without checkout
    or dependency installation, and publishes it with no npm token.
 
-`npm trust` changes registry configuration and may require interactive 2FA; it
-is deliberately not part of a local helper or this document's read-only checks.
+`npm trust` changes registry configuration and requires interactive 2FA for the currently authenticated
+owner. Both creation and `npm trust list` currently stop at that authentication requirement, so no
+trusted-publisher relationship has been claimed as configured or verified. It is deliberately not part
+of a local helper or this document's read-only checks.
 
 ## After an owner-approved npm publication
 
@@ -194,7 +199,7 @@ unpublished `0.1.1` patch candidate.
   inspection refuses a foreign bundle that would pre-disable its `cordis-mp` entry id.
 
 ### Validation
-- 202/202 workspace tests (including journal-core 97/97 with its original POSIX FULL 96-test
+- 203/203 workspace tests (including journal-core 97/97 with its original POSIX FULL 96-test
   gate intact), host smoke, DSH smoke,
   fixture DSH install/pending/explicit-activate/restart E2E, pack/public-candidate gates,
   actionlint, and production dependency audit passed.
