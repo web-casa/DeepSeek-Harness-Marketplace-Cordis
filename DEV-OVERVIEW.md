@@ -98,7 +98,9 @@
   smoke/E2E；静态工作流回归测试锁定该顺序，避免干净 GitHub runner 因缺少 `dsh` 命令而失败。
 - `actions/checkout` 与 `actions/setup-node` 已升级并以提交固定至 Node 24-compatible 的 v5，消除
   GitHub Actions 对其 Node 20 runtime 的弃用告警；同一静态回归测试锁住 publish workflow 的两处
-  `setup-node` 和 checkout pin。
+  `setup-node` 和 checkout pin。该升级已在
+  [CI run 32326135751](https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis/actions/runs/32326135751)
+  完成 Ubuntu、DSH lifecycle 和 Windows BEST_EFFORT 三个 job 的复验。
 - 父仓库的 PostgreSQL live-server smoke 现 seed 两个严格 registry fixture，以和 Docker 一致的
   `next start` 生产构建启动；v4 列表 cursor、ETag/304、web/desktop 筛选、
   `quarantined` kill switch、详情、JSON 404 与静态 chunk 都是硬门禁。启动未就绪立即失败；既有
