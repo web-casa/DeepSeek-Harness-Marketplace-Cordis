@@ -49,12 +49,20 @@ test('dual takeover race yields exactly one winner', async ()=>{
   mkdirSync(join(r,'lock'),{recursive:true})
   writeFileSync(join(r,'lock','owner.json'), JSON.stringify({owner:'x',pid:999999,processStartToken:'dead',ownerToken:'old',epoch:1,heartbeatAt:Date.now()-60_000}))
   const run=()=>new Promise(resolve=>{
-    const c=spawn(process.execPath,[helper,r],{stdio:['ignore','pipe','pipe']}); let out=''
-    c.stdout.on('data',d=>out+=d); c.on('close',()=>{try{resolve(JSON.parse(out))}catch{resolve({error:out})}})
+    const c=spawn(process.execPath,[helper,r],{stdio:['ignore','pipe','pipe']}); let out=''; let err=''; let spawnError=null; let settled=false
+    const finish=(code=null,signal=null)=>{
+      if(settled) return
+      settled=true
+      try{ resolve({...JSON.parse(out),code,signal,stderr:err,spawnError}) }
+      catch{ resolve({ok:false,error:out,code,signal,stderr:err,spawnError}) }
+    }
+    c.stdout.on('data',d=>out+=d); c.stderr.on('data',d=>err+=d)
+    c.on('error',error=>{spawnError={code:error.code,message:error.message};finish()})
+    c.on('close',finish)
   })
   const results=await Promise.all([run(),run()])
   const winners=results.filter(x=>x.ok).length
-  assert.equal(winners,1)
+  assert.equal(winners,1,JSON.stringify(results))
   const cur=JSON.parse(readFileSync(join(r,'lock','owner.json'),'utf8'))
   const win=results.find(x=>x.ok); assert.equal(cur.ownerToken, win.token); assert.equal(cur.epoch,2)
 })
