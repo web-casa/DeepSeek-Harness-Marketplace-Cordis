@@ -2,7 +2,7 @@
 
 ## 结论
 **POSIX FULL 平台范围：10/10 gate 关闭，JOURNAL-SPEC v7 working draft 可冻结为 v1.0-final（条件冻结）。**
-Windows 平台为 BEST_EFFORT，需 Windows CI 实证后才可宣称 FULL。
+Windows 平台为 BEST_EFFORT，已由 Windows CI 实证；该实证不改变其分级为 FULL。
 
 ## Gate 状态
 | Gate | 状态 | 依据 |
@@ -28,8 +28,9 @@ Windows 平台为 BEST_EFFORT，需 Windows CI 实证后才可宣称 FULL。
 - [x] G6/G10 durable failpoint 点与矩阵场景全量对齐（FAILPOINT-COVERAGE.md）
 - [x] G7 统一 schema 校验模块
 - [x] G5 validator 内部持有（validateAndRecord）
-- [ ] Windows BEST_EFFORT 路径在 Windows CI 验证（仍开放；`windows-best-effort` job 已配置，
-  需首个远端 green run 后才可勾选，且绝不改变 Windows 的 BEST_EFFORT 分级）
+- [x] Windows BEST_EFFORT 路径已在 Windows CI 验证（GitHub Actions
+  [run 32325664197](https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis/actions/runs/32325664197)；
+  journal smoke + Web build 通过，且绝不改变 Windows 的 BEST_EFFORT 分级）
 
 ## 外部评审后修复（P1）
 - [x] P1-1 ResolutionJournal.recoverReport schema 不匹配（txid/enum 修复）

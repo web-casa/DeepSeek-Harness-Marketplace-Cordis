@@ -8,8 +8,8 @@
   public with dist-tag `latest` by the approved direct interactive/2FA bootstrap;
   it is immutable and has no OIDC provenance. The `0.1.1` candidate has passed its
   latest post-review local gate (201/201 workspace tests, including journal-core 97/97 with
-  its original POSIX FULL 96-test gate intact), but must be pushed to `main`, then be released through the protected Trusted
-  Publishing workflow after its human approvers are configured.
+  its original POSIX FULL 96-test gate intact) and is now on `main`; it must be released through the
+  protected Trusted Publishing workflow after its human approvers are configured.
 - Package policy: every source workspace remains `private: true`. The only
   intended public package is the generated, dependency-free `@webcasa/web`
   candidate at `0.1.1`, using dist-tag `latest`.
@@ -198,6 +198,9 @@ unpublished `0.1.1` patch candidate.
   gate intact), host smoke, DSH smoke,
   fixture DSH install/pending/explicit-activate/restart E2E, pack/public-candidate gates,
   actionlint, and production dependency audit passed.
+- GitHub Actions [CI run 32325664197](https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis/actions/runs/32325664197)
+  passed its Ubuntu host/DSH jobs and the first native Windows journal/Web smoke. Windows remains
+  BEST_EFFORT.
 - A production self-refusal request returns `409 SELF_INSTALL_FORBIDDEN`; this is a safety
   acceptance check, not a positive production plugin lifecycle E2E.
 

@@ -1,7 +1,7 @@
 # cordis-mp 持久化事务 Journal 正式规格 v7
 
 > 状态：v7 working draft → **S9 后条件冻结 v1.0-final（POSIX FULL）**
-> Windows 平台为 BEST_EFFORT，待 Windows CI 实证
+> Windows 平台为 BEST_EFFORT，已由 Windows CI 实证；不宣称 FULL
 > v7 修订：修复 v6 评审全部阻断项：authoritative head 分派、tombstone 唯一命名与祖先清理、
 > 普通锁 acquire 互斥、target durable 原语、validation gate 一次性写入、冲突证据协议恢复。
 

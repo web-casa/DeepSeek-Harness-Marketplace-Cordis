@@ -101,9 +101,10 @@
   `quarantined` kill switch、详情、JSON 404 与静态 chunk 都是硬门禁。启动未就绪立即失败；既有
   站点 UX smoke 也在显式 IPv4 loopback 上成为 Host/locale/canonical/security 的硬门禁。它同样
   不访问生产 API/R2。
-- `windows-best-effort` CI job 已配置为 Windows 原生目录 fsync 降级、锁 fencing、journal rollback
-  和 Web build smoke；首个 GitHub Actions green run 前仍不宣称 Windows 已实证，更不改变其
-  BEST_EFFORT 分级。
+- `windows-best-effort` CI job 已在 Windows 原生 runner 完成首个 green：
+  [run 32325664197](https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis/actions/runs/32325664197)
+  通过常规文件/目录 fsync 的 BEST_EFFORT 降级、锁 fencing、journal rollback 和 Web build smoke；
+  Windows 仍保持 BEST_EFFORT，绝不因此宣称 FULL。
 - pnpm 仅显式批准 `esbuild` 的构建脚本（`allowBuilds.esbuild: true`）；这是 Web
   打包所需的已声明 devDependency，其余依赖仍不获隐式构建脚本授权。
 - 独立候选打包已实现并完成本地验证：`@webcasa/web` 的私有源码 manifest 明确声明
@@ -148,9 +149,10 @@
 
 ## 未完成事项
 1. `@webcasa/web@0.1.0` 的 direct bootstrap、strict preflight、`dev-assistant` 同步、生产 `count=1`
-   与 API 契约 probe 均已完成；它没有 OIDC provenance。`0.1.1` 是包含宿主自安装/entry-id 冲突保护及
-   本次全项目复审修复的未发布补丁候选。本次提交仍需 push 到 `main`；随后由 owner 指定 GitHub `npm`
-   environment 的人类审批者，配置/复核 `npm trust github`，再从受保护 workflow 发布。父仓库的
+   与 API 契约 probe 均已完成；它没有 OIDC provenance。包含宿主自安装/entry-id 冲突保护、全项目复审、
+   settings 落地页、发布 workflow 和 Windows fsync 修复的 `0.1.1` 未发布候选已推送至 `main`；
+   随后仍需由 owner 指定 GitHub `npm` environment 的人类审批者，配置/复核 `npm trust github`，
+   再从受保护 workflow 发布。父仓库的
    Apache-2.0 文件没有被复制或套用。
 2. `0.1.1` 发布后必须重跑父仓库只读预检
    `pnpm plugins:sync -- --pkg=@webcasa/web --dry-run --no-assets`，并只在 exact latest artifact ready 后
@@ -160,7 +162,6 @@
    `CORDIS_MARKET_PROBE_SLUG=<slug> pnpm verify:cordis-market`，再执行用户确认的 Desktop 安装→pending→
    显式 Activate→重启 E2E。若需 Microsoft Store
    发布，还要走独立审查后更新 `store-curated-plugins.json`，不得提前放宽 allowlist。
-4. 触发并记录 `windows-best-effort` 的首个 GitHub Actions green run；Windows 保持 BEST_EFFORT。
 
 ## 关键命令
 - 全部测试：`pnpm -r test`（以当前 CI 输出为准）
