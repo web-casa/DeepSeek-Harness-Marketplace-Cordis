@@ -48,9 +48,10 @@
   改为仅在 Hero 可见时使用深蓝半透明反色表面；离开 Hero 后恢复亮/暗主题对应的中性导航，普通页面
   不会继承蓝色。移动菜单改为有焦点态的原生按钮。公开站名、SEO、zh/en 文案、首页导语和 SVG
   accessible name 统一为“DeepSeek Harness 插件市场” / “DeepSeek Harness Plugin Marketplace”；
-  `cordis` 仍只是协议生态和 `cordis.run` 域名的技术标识。父仓库已新增路径状态、文案回退和 Hero
+  `cordis` 仍只是协议生态和 `cordis.run` 域名的技术标识。首次生产截图发现 1600px 英文导航会换行，
+  已再改为 `xl` 桌面断点、中等宽度简洁品牌、收紧菜单内边距及不换行标签。父仓库已新增路径状态、文案回退和 Hero
   锚点测试；本地 TypeScript、ESLint、399 unit tests、Knip、production build、diff check 均通过。
-  这项记录不声称生产已完成，需在 Zeabur 部署后验证深色 Hero、普通页、zh/en metadata 和无旧公开名称。
+  这项记录不声称生产已完成，需在 Zeabur 部署后验证修正后的深色 Hero、普通页、zh/en metadata 和无旧公开名称。
 - **市场宿主 Hero 六方案与 V5 目录橱窗（已上线）**：父仓库为 Cordis
   `/marketplace` 首屏实现 V1 信号场、V2 编辑手册、V3 操作台、V4 协议轨道、V5 目录橱窗和 V6 黑色宣言；
   已选择并上线 V5。六版都只保留目录、指南与 npm 发现链接，不引入安装/activate/uninstall mutation。
