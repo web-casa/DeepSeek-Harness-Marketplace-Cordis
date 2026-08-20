@@ -62,7 +62,7 @@
   同域 `200 application/zip` 直出，不再 302。后续安全 review 已补上 R2 流式上限、审批状态
   的计数事务复核、异常 JSON/503 回退和分类成员变更 revision；父仓库 357/357 单测、生产构建
   、Docker `next start` 健康探针和临时 PostgreSQL 的真实 Next 契约探针均已通过。
-- 生产验收（2026-08-20）：`https://cordis.run/api/presets/code/download` 仍直接返回
+- 生产验收（2026-08-20，source cutover 前的历史记录）：`https://cordis.run/api/presets/code/download` 仍直接返回
   `200 application/zip`（无 `Location`）。`@webcasa/web@0.1.0` 已以 direct interactive/2FA
   bootstrap 公开发布为 `latest`，随后通过父仓库的 strict registry-only preflight，并以
   `dev-assistant` 分类同步到生产目录。对 `https://cordis.run/api/v1` 的只读契约 probe 已验证
@@ -75,14 +75,22 @@
   replacement pair（含 operator-attested `0.1.1` version/SHA-512/tarball）才会在同一 PostgreSQL
   事务中锁定 old/new source、保留 `webcasa-web` slug 和既有 tool id，并拒绝双宿主。隔离 PostgreSQL
   18 E2E 已验证切换后 `count=1`、旧 source 数量为 0、新 `0.1.1` artifact 写入且旧扫描证据清空。
-  该实现尚未部署，且尚未执行生产 catalog mutation。
+  该实现已随父仓库 `dd9f42b` 部署至 cordis.run，并于 2026-08-20 完成一次受保护的生产切换。切换前
+  线上 `/api/cron/backup-db` 已生成并 `pg_restore --list` 校验私有 custom-format 归档；切换后只读
+  数据库核验保持原 `tool_id`/`webcasa-web` slug，`@webcasa/web` 数量为 0，新 identity 数量为 1，
+  精确 `0.1.1` registry artifact、双平台、`dev-assistant` 分类与 `clean` 状态均匹配。新 tarball
+  的受控扫描已完成（7 files、0 high、3 warn）；三个 warn 分别是预期的 DSH 子进程环境继承、市场默认
+  `cordis.run` 端点与仅用于相对 URL 解析的 `http://x`，均已逐行审计，未做伪造的 security transition。
+  生产 v4 contract probe 再次通过且严格目录保持 `count=1`；preset `code/download` 直接返回
+  `200 application/zip`，没有跟随重定向。
 - 生产 DSH 验收的结论必须区分：`0.1.0` 的真实目标试运行完成 inspect → pre-disable → install →
   verify → pending，但因目标正是市场宿主自身，pre-disable 禁用了其 `/cordis-mp/activate` 路由，
   activate 收到 405；这不是可接受的正向 E2E。修复后的 `0.1.1` 本地候选会在任何 inspect/journal/
   pre-disable/package mutation 前拒绝同 npm 包名，并在 inspect 后拒绝任何宣称宿主 `cordis-mp`
-  entry id 的外部 bundle；使用真实生产目录的 self-refusal E2E 已验证 409 且 profile 未被禁用。
-  新 identity 的 `0.1.1` 已公开但尚未进入生产目录；完整正向生产 DSH E2E 仍需要一个独立、严格合规的
-  公开插件条目。
+  entry id 的外部 bundle；source cutover 后使用真实生产目录复验 self-refusal E2E，仍返回 409 且
+  profile 未被禁用。
+  新 identity 的 `0.1.1` 已是生产目录中唯一 market-host；完整正向生产 DSH E2E 仍需要一个独立、严格
+  合规的公开插件条目，不能以该宿主自身自安装代替。
 - fixture 已对齐 cursor + `count/page`、`page/per_page` 兼容、ETag/304、JSON
   error、canonical screenshot；`scripts/cordis-run-contract-probe.mjs` 可在
   部署后做无 mutation 的目标验收，DSH E2E 也可显式通过 `CORDIS_RUN_API` 切换。
@@ -162,24 +170,19 @@
   owner 确认且已配置的 `--category`，并正确传递 `--no-assets`；未知分类在同步器初始化前
   fail-closed。同步与提交验证新增 latest bundle 防陈旧 root 字段测试；父仓库为
   363/363 单测与生产构建通过。
-- 生产只读复核（2026-08-20）：`/api/v1/plugins?platform=desktop&limit=1` 为
+- 生产只读复核（2026-08-20，source cutover 前的历史记录）：`/api/v1/plugins?platform=desktop&limit=1` 为
   `200 application/json`、含 ETag、`count=1`；`@webcasa/web@0.1.0` 的 registry version、SHA-512
   integrity 与 tarball 已由 strict preflight 复核。生产 API 的结构契约 probe 已通过，但未把它或
   self-refusal 测试误报为独立插件的正向 DSH/Desktop 安装 E2E。
+- 复审修复：父仓库的 `scripts/plugins/scan-plugins.ts` 现在先加载 `.env.local`，再动态导入会初始化
+  数据库单例的扫描器；回归测试锁定该导入顺序，避免常规本地扫描意外以空 `DATABASE_URL` 启动。
 
 ## 未完成事项
-1. `@webcasa/web@0.1.0` 的 direct bootstrap、strict preflight、`dev-assistant` 同步、生产 `count=1`
-   与 API 契约 probe 均已完成；它没有 OIDC provenance，且只是旧 identity 的历史记录。
-   `@webcasa/deepseek-harness-marketplace@0.1.1` 已通过 owner-approved direct interactive/2FA
-   bootstrap 公开发布为 `latest`，并完成 exact registry tarball 和父仓库 strict preflight 复核。
-   guarded catalog cutover 已开发、单测和隔离 PostgreSQL 18 E2E 验证：目录 source 迁移到新包时旧
-   `@webcasa/web` 停止作为可安装 market-host，`count` 保持为 1、API slug 保持 `webcasa-web`；普通
-   单包 sync 无法留下第二 host。待部署此父仓库提交，并在部署后由发布操作员执行已审阅的生产 mutation。
-   之后才建立/复核 new package 的 OIDC trust。父仓库的 Apache-2.0 文件没有被复制或套用。
-2. 部署 guarded cutover 后，以 registry 输出的 exact `0.1.1`、SHA-512 integrity 与 tarball 执行该
-   精确 replacement command；不得从包名、README 或 `bundle.patch` 反推制品事实。写入后先刷新新 source
-   的扫描报告并按既有安全流程复核，再做生产 API `count=1`、详情、ETag/304、JSON 404 的只读 probe。
-3. 取得独立、严格合规的公开插件条目后，运行真实生产 DSH 的 install → pending → explicit activate →
+1. `@webcasa/deepseek-harness-marketplace@0.1.1` 的 direct interactive/2FA bootstrap 与受保护生产
+   source cutover 已完成；它仍没有 OIDC provenance。后续新版本发布前，需建立并只读复核该包的 npm
+   GitHub OIDC trust；不得把旧 `@webcasa/web` identity 或 direct bootstrap 误报为 provenance。父仓库的
+   Apache-2.0 文件没有被复制或套用。
+2. 取得独立、严格合规的公开插件条目后，运行真实生产 DSH 的 install → pending → explicit activate →
    restart E2E；市场宿主自身必须继续拒绝，不能用自安装伪造正向验收。以已审核公开 slug 运行 Desktop 的
    `CORDIS_MARKET_PROBE_SLUG=<slug> pnpm verify:cordis-market`，再执行用户确认的 Desktop 安装→pending→
    显式 Activate→重启 E2E。若需 Microsoft Store
