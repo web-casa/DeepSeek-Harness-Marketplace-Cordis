@@ -2,13 +2,18 @@
 
 > 状态（2026-08-20）：后端已部署到 `https://cordis.run`。`GET /api/v1/plugins`、
 > `GET /api/v1/plugins/{slug}` 已验证直接 JSON、ETag/304 与 JSON 404；preset 下载也已验证
-> 同域直出 `200 application/zip`、无 `Location`。`@webcasa/web@0.1.0` 已通过 strict registry
-> preflight 并同步，生产 probe 返回 `count=1`。fixture 仍用于独立测试；不得把 fixture E2E、
-> 结构 probe 或市场宿主的 self-refusal 表述为独立插件的生产安装 E2E。
+> 同域直出 `200 application/zip`、无 `Location`。`@webcasa/web@0.1.0` 是历史 bootstrap；
+> 其替换市场宿主与独立 `dsh-plugin-pkgseek@0.1.1` 现均通过 strict registry preflight 并同步，
+> 当前生产 probe 返回 `count=2`。fixture 仍用于独立测试；不得把 fixture E2E、结构 probe
+> 或市场宿主的 self-refusal 表述为独立插件的生产安装 E2E。
 > 该旧包是历史生产记录。`@webcasa/deepseek-harness-marketplace@0.1.1` 已公开发布为
 > `latest`，并通过独立 registry preflight 与 guarded one-host sync/cutover；生产保留
 > `webcasa-web` slug、旧 source 数量为 0、新 source 数量为 1。它仍是市场宿主，不能作为独立
-> 正向安装 E2E 的目标。
+> 正向安装 E2E 的目标。独立 PkgSeek 条目已完成真实生产 DSH 的
+> `inspect → pre-disable → install → verify → pending/restart recovery → explicit activate → restart`
+> 验收；Desktop commit
+> [`6279a96`](https://github.com/web-casa/DeepSeek-Harness-Desktop/commit/6279a96)
+> 已完成同一条目的 bootstrap IPC E2E。该 Desktop 证据不涉及 Store allowlist。
 
 ## 0. 基础约定
 - Base：`https://cordis.run/api/v1`
@@ -135,17 +140,20 @@ Desktop 的 `feat/cordis-v4-desktop` 已采用以下 wire shape；这些规则�
 - [x] 生产 preset download 返回无重定向 `200 application/zip`；Desktop
   `pnpm verify:cordis-preset` 已实际探测。
 - [x] `@webcasa/web@0.1.0` 已完成 strict registry preflight 与 `dev-assistant` 同步；生产 probe
-  已验证 `platform=web` / `platform=desktop`、无 platform、ETag/304、详情与 JSON 404，且 `count=1`。
-  exact version/SHA-512/tarball 均来自 registry，不从 manifest 推断。
+  已验证 `platform=web` / `platform=desktop`、无 platform、ETag/304、详情与 JSON 404；这是
+  host cutover 前的 `count=1` 历史记录。exact version/SHA-512/tarball 均来自 registry，不从 manifest 推断。
 - [x] `@webcasa/deepseek-harness-marketplace@0.1.1` 已公开发布为 `latest`，并以该 exact package name
   完成 strict preflight；version/SHA-512/tarball 均来自 registry。
 - [x] guarded `dev-assistant` sync + `webcasa-web` cutover 已完成：保留既有 slug/tool id，
-  旧 source 数量为 0、新 source 数量为 1，严格目录保持 `count=1`。
-- [ ] 对独立公开 slug 做生产 DSH install → pending recovery → explicit Activate → restart E2E。市场宿主自身
+  旧 source 数量为 0、新 source 数量为 1；这是单宿主约束，而非当前总目录计数。
+- [x] `dsh-plugin-pkgseek@0.1.1` 已公开、严格 preflight 并由 guarded `dev-assistant` sync 加入目录；
+  当前生产总 `count=2`，其 exact SHA-512/tarball、双平台与 engine 与 detail 一致。
+- [x] 对独立公开 slug 完成生产 DSH install → pending recovery → explicit Activate → restart E2E。市场宿主自身
   不能作为目标：`0.1.1` 候选会以 `SELF_INSTALL_FORBIDDEN` 拒绝自身包名，并以
   `HOST_ENTRY_CONFLICT` 拒绝包含 `cordis-mp` entry id 的外部 bundle；它已同步但仍只能作为宿主。
-- [ ] 以公开 slug 运行 `CORDIS_MARKET_PROBE_SLUG=<slug> pnpm verify:cordis-market`，再做经过
-  用户确认的 Desktop install → pending → explicit Activate → restart E2E。
+- [x] 以公开 `dsh-plugin-pkgseek` 运行 Desktop `verify:cordis-market` 与无重定向 preset probe；再以
+  显式 opt-in 的刚构建 web-distribution 二进制完成 Desktop install → pending → explicit Activate →
+  restart bootstrap IPC E2E（commit `6279a96`）。Microsoft Store allowlist 未被改动。
 
 ## 7. 联调前本地替代
 ```bash

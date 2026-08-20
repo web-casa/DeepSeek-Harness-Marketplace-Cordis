@@ -10,8 +10,17 @@
   repository, DSH metadata, patch, ten-file layout, and registry SHA-512 integrity. It has no OIDC
   provenance. The guarded one-host cutover has completed: production retains the
   existing `webcasa-web` slug and tool id, has zero `@webcasa/web` rows and one
-  `@webcasa/deepseek-harness-marketplace@0.1.1` strict artifact row. The live
-  catalog count is therefore `1`, not two market-host entries.
+  `@webcasa/deepseek-harness-marketplace@0.1.1` strict market-host artifact row.
+  The market-host cardinality is therefore `1`, not two market-host entries.
+- Independent production E2E artifact: `dsh-plugin-pkgseek@0.1.1` is public,
+  passed strict registry-only preflight, and was synced under `dev-assistant`.
+  The live install catalog now has `count=2` (one market host plus this
+  independent plugin). Its exact published SHA-512 is
+  `sha512-CdpaMsTQBGgpRfgDLT1+FV0JWlOTJUGed3JEzYYz5IVMwjjncWQ3qj/lgd6NIvoV9YMBHF9p+7ZAyt09f8Q5uA==`.
+  It has completed the real production DSH lifecycle E2E; Desktop commit
+  [`6279a96`](https://github.com/web-casa/DeepSeek-Harness-Desktop/commit/6279a96)
+  completed the separate bootstrap-IPC lifecycle E2E. Neither result changes
+  the Microsoft Store allowlist.
 - Package policy: every source workspace remains `private: true`. The only
   intended public package is the generated, dependency-free
   `@webcasa/deepseek-harness-marketplace`
@@ -212,16 +221,19 @@ guarded cutover.
   24-compatible v5 commits, so the earlier Node 20 action-runtime deprecation annotation does not
   apply to future runs. [CI run 32326135751](https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis/actions/runs/32326135751)
   revalidated all three CI jobs with those pins.
-- A production self-refusal request returns `409 SELF_INSTALL_FORBIDDEN`; this is a safety
-  acceptance check, not a positive production plugin lifecycle E2E.
+- The market-host self-refusal request still returns `409 SELF_INSTALL_FORBIDDEN`; this is a
+  safety acceptance check. The independent `dsh-plugin-pkgseek@0.1.1` now supplies the separate
+  positive production DSH lifecycle E2E, and Desktop's explicit bootstrap-IPC test has passed
+  against that exact production entry.
 
 ### Known boundary
-- `@webcasa/web@0.1.0` is historical only. Production `count=1` is the sole
-  synchronized `@webcasa/deepseek-harness-marketplace@0.1.1` entry under the
-  retained `webcasa-web` slug; any future cutover must still avoid two
-  installable market-host entries.
-  The original target was the market host itself, so it is not valid evidence for a positive
-  production DSH lifecycle E2E. A separate strict public plugin remains required for that E2E.
-- Desktop v4 has a passing production structural smoke; an actual Desktop install E2E remains
-  pending. Trusted Publishing configuration and a later OIDC release are separate pending work.
+- `@webcasa/web@0.1.0` is historical only. Production has two installable catalog entries:
+  `webcasa-web` is the single synchronized
+  `@webcasa/deepseek-harness-marketplace@0.1.1` market host, and
+  `dsh-plugin-pkgseek@0.1.1` is the independent E2E plugin. Any future cutover must still avoid
+  two installable market-host entries.
+- Desktop v4 has passed both production structural smoke and its explicit bootstrap-IPC install
+  lifecycle E2E. Microsoft Store review/allowlist authority remains separate. The published
+  direct-bootstrap versions have no retroactive provenance; later OIDC releases remain new,
+  separately approved releases.
 ```

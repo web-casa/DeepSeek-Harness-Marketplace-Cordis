@@ -25,16 +25,24 @@ current source.
   state before Activate, then verifies the active configuration after another
   DSH startup. Plugins without a local HTTP route use that configuration and
   readiness evidence instead of an invented route.
+- The dual stale-lock takeover test now retains each helper's stderr, exit
+  status/signal and spawn error in a failure diagnostic. This does not alter
+  `FileLock`; it prevents a transient child failure from degrading the POSIX
+  FULL race evidence into an unexplained “zero winners” report.
 
 ## Current assessment
 
 No new critical or high-severity defect was found in the reviewed Web install
 path, journal boundary, inspection path, or E2E script. The POSIX FULL journal
-implementation was not changed. Remaining work is external acceptance, not a
-reason to lower a gate: publish and independently review a non-host plugin,
-synchronize it through the guarded production path, run the positive
-production DSH/Desktop lifecycle E2E, and complete npm Trusted Publishing's
-interactive owner verification before a later OIDC release.
+implementation was not changed. The former external acceptance blockers are
+now closed with the independent `dsh-plugin-pkgseek@0.1.1` artifact: it was
+published, strict-preflighted, synced through the guarded production path, and
+used for both positive production DSH and Desktop lifecycle evidence. PkgSeek's
+future release path has a separately verified GitHub OIDC Trusted Publisher;
+the already published direct-2FA `0.1.1` does not gain retroactive provenance.
+The market-host package's future OIDC relationship and Microsoft Store
+allowlist authority remain separate owner decisions, not reasons to lower a
+gate.
 
 ## Final verification
 
@@ -48,14 +56,28 @@ interactive owner verification before a later OIDC release.
 - `CORDIS_RUN_API=https://cordis.run/api/v1 node scripts/cordis-run-contract-probe.mjs`:
   pass. The separate host self-refusal E2E returns `409 SELF_INSTALL_FORBIDDEN`
   before mutation, as required.
-- Desktop's read-only `verify:cordis-preset` and `verify:cordis-market` probes
-  pass, including `webcasa-web` nested-source wire validation.
+- The current production Desktop API is direct JSON/ETag and has `count=2`:
+  the sole market host plus independent `dsh-plugin-pkgseek@0.1.1`. Its exact
+  npm integrity, tarball, engines and platforms match the production detail.
+- `dsh-plugin-pkgseek@0.1.1` completed the positive production DSH lifecycle
+  E2E in an isolated profile: stale-free inspect → pre-disable → scripts-disabled
+  install → exact lockfile integrity → pending/restart recovery → explicit
+  activate → active/restart. It did not invent a plugin HTTP route.
+- Desktop commit
+  [`6279a96`](https://github.com/web-casa/DeepSeek-Harness-Desktop/commit/6279a96)
+  adds and passes the matching explicitly opted-in Tauri bootstrap-IPC E2E,
+  including stale revision rejection before mutation and the same pending/
+  activate/restart assertions. It does not exercise or alter a Store build.
 - The latest pushed CI evidence, [run 32331107816](https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis/actions/runs/32331107816),
   passed its Ubuntu, DSH lifecycle, and native Windows BEST_EFFORT jobs. This
-  local commit has not been pushed, so it has not claimed a remote CI run.
+  record is marketplace CI evidence; the new Desktop E2E remains an explicit
+  manual production check and is intentionally not a production-network CI dependency.
 - `actionlint .github/workflows/ci.yml .github/workflows/publish.yml`,
-  `pnpm audit --prod --audit-level=high`, Node syntax checks, the review style
-  checker, and `git diff --check`: pass.
+  `pnpm audit --prod --audit-level=high`, Node syntax checks, and
+  `git diff --check`: pass. The supplementary generic style checker has no
+  non-naming findings in the new TypeScript E2E; its camelCase warnings are
+  Python-oriented false positives, not a request to violate the Desktop
+  TypeScript convention.
 
 These commands were run against the final change set before this review is
 committed.

@@ -4,32 +4,49 @@
 
 The cordis.run backend is the parent repository
 `/home/ivmm/daohang/toolso-ai-open`, not the nested `cordis-mp` workspace. It
-is deployed. A read-only production check on 2026-08-19 confirmed:
+is deployed. The current read-only production check on 2026-08-20 confirms:
 
 - `GET /api/v1/plugins?platform=desktop&limit=1` returns v1 JSON with ETag;
 - a missing detail returns JSON `404 NOT_FOUND` rather than Next.js HTML; and
 - `GET /api/presets/code/download` returns direct `200 application/zip` without
   a `Location` header.
 
-The strict install catalog currently has `count=1`: the guarded one-host
+The strict install catalog currently has `count=2`. The guarded one-host
 cutover retained `webcasa-web` while replacing its source with
-`@webcasa/deepseek-harness-marketplace@0.1.1`. The old source count is zero,
-so the catalog does not expose two installable market hosts. This proves the
-production API structure and preset delivery only; it is **not** a positive
-production plugin-install or lifecycle E2E because the sole entry is the
-market host and must self-refuse.
+`@webcasa/deepseek-harness-marketplace@0.1.1`; the old source count remains
+zero, so the catalog does not expose two installable market hosts. The second,
+independent entry is `dsh-plugin-pkgseek@0.1.1`, published public, checked by
+the strict registry-only preflight, and synchronized through the guarded
+`dev-assistant` path. Its production detail has the expected canonical npm
+tarball and SHA-512 integrity.
 
-## Remaining release and acceptance work
+Positive production lifecycle acceptance is complete and deliberately kept
+separate from the market-host self-refusal check:
+
+- the real DSH E2E installed PkgSeek into a temporary profile and proved
+  inspect, pre-disable, scripts-disabled install, integrity verification,
+  pending recovery across restart, explicit activation, and active state after
+  a second restart; and
+- Desktop commit
+  [`6279a96`](https://github.com/web-casa/DeepSeek-Harness-Desktop/commit/6279a96)
+  adds a manually opt-in, production bootstrap-IPC E2E against the same entry.
+  It asserts stale revision refusal before mutation, pending receipt/lockfile
+  proof, explicit activation, and active state after a real Harness restart in
+  a disposable `DSH_HOME`.
+
+The Desktop test is a web-distribution IPC lifecycle test, not a Microsoft
+Store install test. It does not modify the Store allowlist.
+
+## Future release and maintenance work
 
 The parent runbook in
 [`../docs/CORDIS-API-V4.md`](../../docs/CORDIS-API-V4.md) remains the procedure
 for a fresh environment or a future v4 deployment change. Do not rerun schema
 migration or synchronization blindly against the already deployed production
-service. The remaining acceptance sequence is publish an owner-approved
-*independent* artifact, run its registry-only preflight, perform a guarded
-normal registry synchronization with an owner-approved category, and then meet
-the strict acceptance gates below. Do not rerun the completed market-host
-cutover.
+service. Do not rerun schema migration, the completed market-host cutover, or
+the ordinary PkgSeek synchronization blindly. A later independent artifact or
+source replacement needs its own owner confirmation, exact registry proof,
+approved category, and the same acceptance gates below.
 
 The deployed routes provide:
 
@@ -80,7 +97,22 @@ artifact is safe to install in a temporary profile. The script still checks
 inspect integrity, pre-disable, `--ignore-scripts`, lockfile verification,
 durable pending recovery, explicit activate, and restart.
 
-Do not make a production-network check mandatory in normal CI until the backend
-owner supplies a stable test target and its E2E plugin contract. The repository
-CI should keep using the local fixture; a scheduled/manual deployment job can
-run the commands above after that agreement.
+The recorded production command used the independent entry without inventing a
+local route:
+
+```bash
+CORDIS_RUN_API=https://cordis.run/api/v1 \
+CORDIS_E2E_SLUG=dsh-plugin-pkgseek \
+CORDIS_E2E_PLUGIN_ROUTE='' \
+  node scripts/dsh-e2e-install.mjs
+```
+
+This is an authorized manual lifecycle mutation against an isolated profile;
+it is evidence for the production state at the time of execution, not a normal
+CI dependency or permission to bypass the harness mutation guard.
+
+Do not make the production-network check mandatory in normal CI even though
+the reviewed PkgSeek target now exists: ordinary CI must remain deterministic
+and must not create an ambient production mutation dependency. The repository
+CI keeps using the local fixture; an explicitly authorized manual or deployment
+acceptance run may execute the commands above.

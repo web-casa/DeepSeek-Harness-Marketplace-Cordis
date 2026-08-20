@@ -44,6 +44,28 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
+- **2026-08-20 生产收尾（覆盖下方同日但较早的历史 `count=1`、未发布和 E2E 待做记录）**：
+  `https://cordis.run/api/v1/plugins?platform=desktop&limit=100` 现直接返回带 ETag 的 JSON，
+  `count=2`。其中 `webcasa-web` 仍是唯一市场宿主
+  `@webcasa/deepseek-harness-marketplace@0.1.1`；独立条目
+  `dsh-plugin-pkgseek@0.1.1` 已公开、经 strict registry-only preflight 与受控
+  `dev-assistant` 同步进入生产目录。其生产 detail 的 exact registry artifact 为
+  `sha512-CdpaMsTQBGgpRfgDLT1+FV0JWlOTJUGed3JEzYYz5IVMwjjncWQ3qj/lgd6NIvoV9YMBHF9p+7ZAyt09f8Q5uA==`，
+  `https://registry.npmjs.org` `.tgz`、双平台和
+  `>=0.1.0-rc.7 <0.2.0` engine 均被只读复核。
+- **正向生产 DSH E2E 已完成**：用独立 PkgSeek 条目、真实生产 API 和临时 profile
+  复验 `inspect integrity → pre-disable → install (--ignore-scripts) → verify → pending →
+  pending restart recovery → explicit activate → active restart`。它没有虚构插件 HTTP 路由；
+  市场宿主的 self-refusal 仍是独立安全验收，不能替代这项正向证据。
+- **正向生产 Desktop E2E 已完成**：Desktop 分支
+  [`6279a96`](https://github.com/web-casa/DeepSeek-Harness-Desktop/commit/6279a96)
+  新增显式 opt-in 的 `verify:cordis-desktop-e2e`。它通过真实 Tauri bootstrap IPC 驱动刚构建的
+  web-distribution 二进制，并在独立临时 `DSH_HOME` 中证明 stale revision 安装/激活精确拒绝、
+  lockfile integrity/pending receipt、显式 Activate 及 Harness 重启后 active；这不是 Store UI
+  或 Microsoft Store allowlist 验收，后者未被改变。
+- PkgSeek 的未来 npm 发布已配置并只读复核 GitHub OIDC Trusted Publisher；已发布的 `0.1.1`
+  仍是 direct interactive/2FA 版本，不能追溯声称 provenance。市场宿主的后续 OIDC 发布仍须按其
+  自己的 owner/repository 关系单独决定。
 - 206 tests / 206 pass（2026-08-20 `0.1.1` 候选的最新完整本地门禁；其中
   journal-core 97/97，原 POSIX FULL 96-test gate 保持不变）。
 - 真实 DSH E2E PASS：inspect → patch pre-disable → pending 状态跨重启恢复 →
@@ -189,15 +211,12 @@
 
 ## 未完成事项
 1. `@webcasa/deepseek-harness-marketplace@0.1.1` 的 direct interactive/2FA bootstrap 与受保护生产
-   source cutover 已完成；它仍没有 OIDC provenance。后续新版本发布前，需建立并只读复核该包的 npm
-   GitHub OIDC trust；不得把旧 `@webcasa/web` identity 或 direct bootstrap 误报为 provenance。父仓库的
-   Apache-2.0 文件没有被复制或套用。
-2. 先经 owner 确认 push/publish `dsh-plugin-pkgseek@0.1.1`，并用 exact registry artifact 做只读
-   preflight、扫描和 owner-approved category 同步；随后运行真实生产 DSH 的 install → pending recovery →
-   explicit activate → restart E2E。市场宿主自身必须继续拒绝，不能用自安装伪造正向验收。以已审核公开 slug 运行 Desktop 的
-   `CORDIS_MARKET_PROBE_SLUG=<slug> pnpm verify:cordis-market`，再执行用户确认的 Desktop 安装→pending→
-   显式 Activate→重启 E2E。若需 Microsoft Store
-   发布，还要走独立审查后更新 `store-curated-plugins.json`，不得提前放宽 allowlist。
+   source cutover 已完成；它本身仍没有 OIDC provenance。若要发布该市场宿主的新版本，需由 owner 为该
+   package/repository 单独建立并复核 npm GitHub OIDC trust；不得把 PkgSeek 的 publisher relationship、旧
+   `@webcasa/web` identity 或 direct bootstrap 误报为它的 provenance。父仓库的 Apache-2.0 文件没有被复制或套用。
+2. Microsoft Store 发布仍需独立人工审查并有意更新 `store-curated-plugins.json`；生产目录可见性、生产
+   Desktop bootstrap IPC E2E 与 web distribution 验收都不授予 Store allowlist 权限。持续发布时维持 fixture
+   CI，按部署/发版手动重跑生产 contract、DSH 和 Desktop 生命周期验收；不要把生产网络 mutation 纳入普通 CI。
 
 ## 关键命令
 - 全部测试：`pnpm -r test`（以当前 CI 输出为准）
