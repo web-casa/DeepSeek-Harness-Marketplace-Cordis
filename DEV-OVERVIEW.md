@@ -66,6 +66,10 @@
 - PkgSeek 的未来 npm 发布已配置并只读复核 GitHub OIDC Trusted Publisher；已发布的 `0.1.1`
   仍是 direct interactive/2FA 版本，不能追溯声称 provenance。市场宿主的后续 OIDC 发布仍须按其
   自己的 owner/repository 关系单独决定。
+- 最新 marketplace CI
+  [run 32347079076](https://github.com/web-casa/DeepSeek-Harness-Marketplace-Cordis/actions/runs/32347079076)
+  已通过 Linux test/build/host smoke、真实 fixture DSH lifecycle E2E 与 Windows 原生
+  BEST_EFFORT journal/Web build；Windows 仍只声明 BEST_EFFORT。
 - 206 tests / 206 pass（2026-08-20 `0.1.1` 候选的最新完整本地门禁；其中
   journal-core 97/97，原 POSIX FULL 96-test gate 保持不变）。
 - 真实 DSH E2E PASS：inspect → patch pre-disable → pending 状态跨重启恢复 →
