@@ -3,9 +3,8 @@
 Date: 2026-08-20
 
 > Historical record: this document describes the completed bootstrap into `@webcasa/web@0.1.0`.
-> The owner later selected `@webcasa/deepseek-harness-marketplace` for the current unpublished
-> candidate; this record must not be read as approval to publish the new identity or as a rewrite of
-> the immutable old registry artifact.
+> The owner later selected `@webcasa/deepseek-harness-marketplace`, which is now separately public
+> at `0.1.1`; this record must not rewrite the immutable old registry artifact or imply catalog cutover.
 
 ## Decision and evidence
 
@@ -48,6 +47,5 @@ Date: 2026-08-20
   the npm response completed successfully. The direct release has no OIDC provenance.
 - Its exact registry artifact passed the parent preflight and was synchronized to
   `dev-assistant`; the production API contract probe observed `count=1`.
-- GitHub `npm` environment approvers and `npm trust github` remain unconfigured;
-  those are required before the unpublished `0.1.1` safety patch can be released
-  through Trusted Publishing.
+- The GitHub `npm` environment is configured. `npm trust github` for the new package remains
+  unconfigured; it is required only for a later OIDC release after the direct `0.1.1` bootstrap.

@@ -4,10 +4,10 @@
 范围：`cordis-mp` 的受版本控制 packages、`apps/web`、脚本、CI 与发布边界。未修改
 `journal-core` 的 POSIX FULL 语义或实现。
 
-> Identity correction: this review's `@webcasa/web@0.1.1` candidate output is historical evidence
-> from before the owner changed the intended public identity. The current unpublished candidate is
-> `@webcasa/deepseek-harness-marketplace@0.1.1`; old-package production probes remain historical
-> and are not evidence that the new package is published.
+> Publication update: this review's `@webcasa/web@0.1.1` candidate output is historical evidence
+> from before the owner changed the intended public identity. The replacement
+> `@webcasa/deepseek-harness-marketplace@0.1.1` is now public with `latest` and has passed exact
+> registry preflight, but remains absent from the production catalog pending a guarded one-host cutover.
 
 ## 已修复的结论
 
@@ -49,6 +49,7 @@
 
 - fixture 生命周期 E2E 和生产 self-refusal 都不是独立公开插件的正向生产 DSH/Desktop E2E。
   该验收仍需要一个独立、严格合规且经 owner 确认的公开条目。
-- `0.1.1` 仍未发布、tag 或 push；Trusted Publishing 仍需要 owner 配置 GitHub `npm`
-  environment 人类审批和 `npm trust github`。
+- At this review snapshot `0.1.1` was not yet published. It is now public by direct interactive/2FA
+  bootstrap; no tag was created, and Trusted Publishing still needs `npm trust github` configuration
+  and verification for a later version.
 - Windows 仍为 BEST_EFFORT；首个 GitHub Actions Windows green run 前不将其表述为已实证。

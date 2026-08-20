@@ -1,8 +1,8 @@
 # Self-review — single-package registry preflight
 
-> Identity correction: all `@webcasa/web@0.1.0` execution results below are historical registry
-> evidence. The current unpublished target is `@webcasa/deepseek-harness-marketplace@0.1.1` and must
-> independently pass this same exact-package preflight before any owner-approved production sync.
+> Publication update: all `@webcasa/web@0.1.0` execution results below are historical registry
+> evidence. `@webcasa/deepseek-harness-marketplace@0.1.1` is now public and has independently passed
+> this exact-package preflight; it still needs a guarded one-host production cutover.
 
 ## Scope
 
@@ -60,7 +60,8 @@
 Execution update (2026-08-20): `@webcasa/web@0.1.0` is public in npm, its exact
 registry artifact passed this preflight, and the approved `dev-assistant` sync
 created a production catalog entry. The target contract probe observed `count=1`.
-The direct bootstrap is not OIDC provenance. A `0.1.1` safety candidate is still
-unpublished and must repeat preflight/sync after its Trusted Publishing release.
+The direct bootstrap is not OIDC provenance. The replacement
+`@webcasa/deepseek-harness-marketplace@0.1.1` is also public and has passed its
+own exact preflight, but requires a guarded catalog cutover rather than a second ordinary sync.
 Real positive production DSH/Desktop E2E, Store allowlist review, and Windows
 hosted-CI evidence remain owner/operator gates and are not claimed complete here.

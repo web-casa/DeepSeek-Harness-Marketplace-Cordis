@@ -49,14 +49,15 @@ The tarball contains `dist/index.js`, `dist/client.js`, the root-level
 `data/registry-snapshot.json`, and the bundle patch. Keeping `dist/` intact is
 required for the host's offline snapshot fallback to resolve correctly.
 
-No npm publication is performed by these commands. The intended public package
-is `@webcasa/deepseek-harness-marketplace@0.1.1`, with dist-tag `latest`, MIT,
-and `Copyright (c) 2026 www.Web.Casa`; it is not published yet. The earlier
-`@webcasa/web@0.1.0` publication is an immutable historical bootstrap and is
-not the identity of this candidate. The workspace source deliberately remains
-private; only its generated, dependency-free candidate is publishable.
+No npm publication is performed by these commands. The generated public package
+`@webcasa/deepseek-harness-marketplace@0.1.1` is now public with dist-tag
+`latest`, MIT, and `Copyright (c) 2026 www.Web.Casa`; its direct interactive/2FA
+bootstrap has no OIDC provenance. The earlier `@webcasa/web@0.1.0` publication
+is an immutable historical bootstrap and is not the identity of this package.
+The workspace source deliberately remains private; only its generated,
+dependency-free candidate is publishable.
 
-Before publishing, run `pnpm run release:public-check` from the repository
+Before any later publication, run `pnpm run release:public-check` from the repository
 root. It locally verifies the declaration, bounded regular `LICENSE` file,
 generated candidate, and npm's script-free offline dry-run file list; it does
 not publish or contact a registry.
@@ -73,10 +74,10 @@ OIDC token; a separate job downloads the SHA-512-verified tarball and is the
 only job allowed to exchange an OIDC token for publication.
 
 npm requires a package to exist before a Trusted Publisher can be configured.
-Therefore `@webcasa/deepseek-harness-marketplace@0.1.1` needs a separately
-owner-approved interactive/2FA bootstrap before any OIDC-based later release.
-After that release exists, configure its publisher with the exact remote and
-workflow filename, then use the protected workflow. Once npm has published the
-candidate, run the parent repository's registry sync so cordis.run can capture
-the registry's exact tarball URL and SHA-512 integrity; hand-written catalog
-source data is not accepted.
+The `0.1.1` direct bootstrap now satisfies that prerequisite; configure and
+verify the publisher with the exact remote and workflow filename before any
+later OIDC release. The workflow requires an explicit future version and
+refuses an already-published npm version before staging. Its registry artifact
+has passed the parent repository's read-only preflight, but the production
+catalog must use a guarded one-host cutover rather than create a second
+installable market-host entry. Hand-written catalog source data is not accepted.

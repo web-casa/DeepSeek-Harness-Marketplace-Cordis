@@ -2,9 +2,9 @@
 
 Date: 2026-08-20
 
-> Identity correction: `@webcasa/web@0.1.0` below is the immutable production target used for the
-> historical self-refusal probe. The current unpublished candidate loads
-> `@webcasa/deepseek-harness-marketplace` from its own manifest; the `cordis-mp` entry-id conflict
+> Publication update: `@webcasa/web@0.1.0` below is the immutable production target used for the
+> historical self-refusal probe. `@webcasa/deepseek-harness-marketplace@0.1.1` is now public but
+> unsynchronized; it loads its identity from its own manifest, while the `cordis-mp` entry-id conflict
 > guard remains the protection against the old host package or any foreign bundle.
 
 ## Trigger and scope
@@ -52,8 +52,7 @@ registry artifact or claim a positive production lifecycle E2E.
 
 ## Residual boundary
 
-The current independent strict production catalog has only the market host
-entry. A separate reviewed public plugin is required for a valid positive DSH
-install → pending → explicit activate → restart E2E. `0.1.1` must complete the
-normal local release gate, protected Trusted Publishing release, and exact
-registry re-preflight/sync before it is represented as available in production.
+The current independent strict production catalog has only the historical market-host entry. A
+separate reviewed public plugin is required for a valid positive DSH install → pending → explicit
+activate → restart E2E. The public `0.1.1` artifact has passed exact preflight; its guarded catalog
+cutover and later Trusted Publishing configuration remain pending.

@@ -7,7 +7,7 @@ const workflowPath = fileURLToPath(new URL('../../../.github/workflows/publish.y
 const PINNED_DSH_INSTALL = 'npm install --global --ignore-scripts @deepseek-ai/dsh@0.1.0-rc.7'
 const NODE_24_CHECKOUT = 'actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0'
 const NODE_24_SETUP_NODE = 'actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0'
-const PUBLIC_RELEASE = '@webcasa/deepseek-harness-marketplace@0.1.1'
+const FUTURE_RELEASE_EXAMPLE = '@webcasa/deepseek-harness-marketplace@<next-version>'
 const PUBLIC_ARTIFACT = 'webcasa-deepseek-harness-marketplace-release-candidate.tgz'
 
 test('publish validation provisions the pinned DSH CLI before DSH smoke and E2E', () => {
@@ -43,8 +43,15 @@ test('publish job remains behind the npm environment and OIDC identity gate', ()
   assert.match(publish, /^    environment: npm$/m, 'public publication must require the npm deployment environment')
   assert.match(publish, /^      id-token: write$/m, 'public publication must use OIDC instead of an npm token')
   assert.match(publish, /^        run: npm publish .* --provenance --ignore-scripts$/m, 'publication must retain provenance and disable scripts')
-  assert.ok(workflow.includes(`default: '${PUBLIC_RELEASE}'`), 'manual release default must match the approved public package')
+  const expectedReleaseInput = workflow.slice(workflow.indexOf('      expected_release:'), workflow.indexOf('      confirm_publish:'))
+  assert.match(expectedReleaseInput, new RegExp(FUTURE_RELEASE_EXAMPLE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'manual release input must require an explicit future version')
+  assert.doesNotMatch(expectedReleaseInput, /^\s*default:/m, 'a published version must never remain as a workflow default')
   assert.match(publish, new RegExp(`npm publish release-artifact/${PUBLIC_ARTIFACT.replaceAll('.', '\\.')}`), 'publish job must use the reviewed artifact name')
+  const existingVersionGate = workflow.indexOf('      - name: Refuse an already-published release version')
+  const staging = workflow.indexOf('      - name: Stage candidate and record SHA-512')
+  assert.ok(existingVersionGate >= 0 && existingVersionGate < staging, 'OIDC validation must reject an immutable existing npm version before staging')
+  assert.match(workflow, /Object\.hasOwn\(packument\.versions \?\? \{\}, source\.version\)/, 'existing-version check must inspect the registry packument')
+  assert.match(workflow, /refusing first OIDC publication/, 'OIDC workflow must not be used to bootstrap a package that npm cannot yet trust')
   assert.doesNotMatch(
     publish,
     /^\s*(?:NODE_AUTH_TOKEN|NPM_TOKEN):/m,

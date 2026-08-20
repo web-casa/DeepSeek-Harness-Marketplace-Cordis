@@ -2,11 +2,10 @@
 
 Date: 2026-08-20
 
-> Identity correction: the workflow review remains valid for its separated validation/OIDC boundary,
-> but its former `@webcasa/web@0.1.1` target has been superseded by the unpublished
-> `@webcasa/deepseek-harness-marketplace@0.1.1` identity. npm requires that new package to exist
-> before a Trusted Publisher can be attached, so its first owner-approved publication is a separate
-> direct interactive/2FA bootstrap; OIDC applies to a later version.
+> Publication update: the workflow review remains valid for its separated validation/OIDC boundary.
+> Its former `@webcasa/web@0.1.1` target was superseded by
+> `@webcasa/deepseek-harness-marketplace@0.1.1`, which is now public by direct interactive/2FA
+> bootstrap. OIDC applies only to a later version after the new package's publisher is configured.
 
 ## Scope reviewed
 
@@ -62,8 +61,8 @@ Date: 2026-08-20
   bootstrap rather than an OIDC-provenance release.
 - Parent strict registry preflight, `dev-assistant` synchronization, and the
   production API contract probe succeeded with `count=1`.
-- The GitHub `npm` environment still needs owner-selected human approvers, then
-  `npm trust github` must be configured and verified. The next intended release
-  is `@webcasa/web@0.1.1`, not a replacement of immutable `0.1.0`.
+- The GitHub `npm` environment is configured, but `npm trust github` for the new package still must
+  be configured and verified. The next OIDC release must use a new version of
+  `@webcasa/deepseek-harness-marketplace`, not either immutable direct-bootstrap version.
 - A positive production DSH/Desktop lifecycle E2E remains pending an independent
   strict public plugin; the market host self-target is intentionally refused.

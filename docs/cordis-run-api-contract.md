@@ -5,9 +5,9 @@
 > 同域直出 `200 application/zip`、无 `Location`。`@webcasa/web@0.1.0` 已通过 strict registry
 > preflight 并同步，生产 probe 返回 `count=1`。fixture 仍用于独立测试；不得把 fixture E2E、
 > 结构 probe 或市场宿主的 self-refusal 表述为独立插件的生产安装 E2E。
-> 该旧包是历史生产记录；当前未发布候选已更名为
-> `@webcasa/deepseek-harness-marketplace@0.1.1`，在其独立 registry preflight、同步和旧条目
-> cutover 完成前，不得把它表述为目录内可安装条目。
+> 该旧包是历史生产记录。`@webcasa/deepseek-harness-marketplace@0.1.1` 已公开发布为
+> `latest`，并通过独立 registry preflight；在 guarded sync 和旧条目 cutover 完成前，不得把它表述为
+> 目录内可安装条目。
 
 ## 0. 基础约定
 - Base：`https://cordis.run/api/v1`
@@ -136,12 +136,13 @@ Desktop 的 `feat/cordis-v4-desktop` 已采用以下 wire shape；这些规则�
 - [x] `@webcasa/web@0.1.0` 已完成 strict registry preflight 与 `dev-assistant` 同步；生产 probe
   已验证 `platform=web` / `platform=desktop`、无 platform、ETag/304、详情与 JSON 404，且 `count=1`。
   exact version/SHA-512/tarball 均来自 registry，不从 manifest 推断。
-- [ ] `@webcasa/deepseek-harness-marketplace@0.1.1` 尚未发布；发布后必须以该 exact package name
-  重跑 strict preflight，确认由同步器生成的 slug 不冲突，再经 owner 批准执行 `dev-assistant` 同步。
-  旧 `@webcasa/web` entry 的 cutover 不得留下两个可安装 market-host。
+- [x] `@webcasa/deepseek-harness-marketplace@0.1.1` 已公开发布为 `latest`，并以该 exact package name
+  完成 strict preflight；version/SHA-512/tarball 均来自 registry。
+- [ ] 为该新包实施并审核 guarded `dev-assistant` sync + `webcasa-web` cutover，确认由同步器生成的 slug
+  不冲突，并使生产目录始终只保留一个可安装 market-host。
 - [ ] 对独立公开 slug 做生产 DSH install → pending → explicit Activate → restart E2E。市场宿主自身
   不能作为目标：`0.1.1` 候选会以 `SELF_INSTALL_FORBIDDEN` 拒绝自身包名，并以
-  `HOST_ENTRY_CONFLICT` 拒绝包含 `cordis-mp` entry id 的外部 bundle；它尚未发布。
+  `HOST_ENTRY_CONFLICT` 拒绝包含 `cordis-mp` entry id 的外部 bundle；它尚未同步到生产目录。
 - [ ] 以公开 slug 运行 `CORDIS_MARKET_PROBE_SLUG=<slug> pnpm verify:cordis-market`，再做经过
   用户确认的 Desktop install → pending → explicit Activate → restart E2E。
 
