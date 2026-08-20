@@ -44,6 +44,13 @@
 - Windows 为 BEST_EFFORT，POSIX FULL。
 
 ## 当前状态
+- **市场宿主 Hero 六方案（待选择，未改变线上现役）**：父仓库为 Cordis
+  `/marketplace` 首屏实现 V1 信号场（现役）、V2 编辑手册、V3 操作台、V4 协议轨道、V5 目录橱窗和
+  V6 黑色宣言；六版都只保留目录、指南与 npm 发现链接，不引入安装/activate/uninstall mutation。
+  评审页 `/marketplace.preview` 是受限的 dot route，只有服务端 `ENABLE_DESIGN_PREVIEW=1` 的精确值
+  才能访问；未设或其它值一律 404，且 `noindex,nofollow`。正式页只直接加载 V1，避免预览方案进入
+  现役首屏依赖。本地已通过 TypeScript、ESLint、389 个 unit tests、Knip、production build、diff
+  check，以及 preview 200/404 和 390px 六版无横向溢出的 HTTP/视觉验收；该待选择工作尚未推送或部署。
 - **市场宿主公开产品面（已上线）**：父仓库已实现 Cordis 专属
   `/marketplace` 落地页、首页介绍区、导航/robots/sitemap、以及自包含的品牌 SVG；公开页只链接
   目录、指南和 npm，不创建 `/cordis-mp/install`、activate 或 uninstall mutation 通道。对应组件测试、
